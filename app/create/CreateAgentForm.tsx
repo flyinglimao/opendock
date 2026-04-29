@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useWalletClient, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
@@ -96,23 +96,24 @@ export default function CreateAgentForm() {
     query: { enabled: !!txHash },
   });
 
-  // Parse tokenId from Minted event once receipt arrives
-  const mintedTokenId =
-    receipt?.logs
-      .map((log) => {
-        try {
-          // Minted event: tokenId is the first indexed topic (topics[1])
-          const tokenId = BigInt(log.topics[1] ?? "0");
-          return tokenId;
-        } catch {
-          return null;
-        }
-      })
-      .find((id) => id !== null) ?? null;
+  // Transition waiting → done once the receipt arrives and tokenId is parsed
+  useEffect(() => {
+    if (!receipt || step.id !== "waiting") return;
 
-  if (mintedTokenId && step.id === "waiting") {
-    setStep({ id: "done", tokenId: mintedTokenId, txHash: step.txHash });
-  }
+    // Walk all logs; tokenId is topics[1] on the Minted event
+    for (const log of receipt.logs) {
+      try {
+        if (!log.topics[1]) continue;
+        const tokenId = BigInt(log.topics[1]);
+        setStep({ id: "done", tokenId, txHash: step.txHash });
+        return;
+      } catch {
+        // not the Minted event — skip
+      }
+    }
+    // Receipt arrived but no Minted event found — treat as error
+    setStep({ id: "error", message: "Transaction confirmed but Minted event not found in logs." });
+  }, [receipt, step.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     setUploadedFile(e.target.files?.[0] ?? null);
@@ -343,49 +344,33 @@ export default function CreateAgentForm() {
             </div>
           </div>
 
-          {/* Deploy Button */}
-          <div className="mt-lg pt-lg border-t border-surface-variant flex flex-col sm:flex-row items-center justify-between gap-md">
-            {/* Wallet connect / status */}
+          {/* Deploy / Connect button */}
+          <div className="mt-lg pt-lg border-t border-surface-variant flex justify-end">
             {!isConnected ? (
-              <div className="flex flex-col gap-xs w-full sm:w-auto">
-                <p className="font-body-sub text-body-sub text-outline text-center sm:text-left">
-                  Connect your wallet to deploy
-                </p>
-                <ConnectButton />
-              </div>
+              <ConnectButton />
             ) : (
-              <div className="flex items-center gap-sm">
-                <div className="w-2 h-2 rounded-full bg-green-400" />
-                <span className="font-body-sub text-body-sub text-on-surface-variant font-mono">
-                  {address?.slice(0, 6)}…{address?.slice(-4)}
-                </span>
-                <ConnectButton showBalance={false} accountStatus="address" />
-              </div>
+              <button
+                type="submit"
+                disabled={isRunning || !agentName.trim()}
+                className="bg-primary text-on-primary font-label-caps text-label-caps font-semibold py-md px-xl rounded-full hover:shadow-[0px_10px_30px_rgba(0,0,0,0.08)] active:scale-95 transition-all w-full sm:w-auto flex items-center justify-center gap-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+              >
+                {isRunning ? (
+                  <>
+                    <span className="inline-block w-4 h-4 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin" />
+                    {step.id === "uploading" && "Uploading…"}
+                    {step.id === "minting" && "Minting…"}
+                    {step.id === "waiting" && "Confirming…"}
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                      rocket_launch
+                    </span>
+                    Deploy to 0G
+                  </>
+                )}
+              </button>
             )}
-
-            <button
-              type="submit"
-              disabled={!isConnected || isRunning || !agentName.trim()}
-              className="bg-primary text-on-primary font-label-caps text-label-caps font-semibold py-md px-xl rounded-full hover:shadow-[0px_10px_30px_rgba(0,0,0,0.08)] active:scale-95 transition-all w-full sm:w-auto flex items-center justify-center gap-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
-            >
-              {isRunning ? (
-                <>
-                  <span
-                    className="inline-block w-4 h-4 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin"
-                  />
-                  {step.id === "uploading" && "Uploading…"}
-                  {step.id === "minting" && "Minting…"}
-                  {step.id === "waiting" && "Confirming…"}
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                    rocket_launch
-                  </span>
-                  Deploy to 0G
-                </>
-              )}
-            </button>
           </div>
         </>
       )}

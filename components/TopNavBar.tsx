@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 const navLinks = [
   { href: "/", label: "Explore" },
@@ -49,9 +50,9 @@ export default function TopNavBar() {
           )}
         </nav>
 
-        <button className="bg-primary text-on-primary px-4 py-2 rounded font-label-caps text-label-caps font-semibold hover:opacity-90 transition-opacity hidden md:block">
-          Connect Wallet
-        </button>
+        <div className="hidden md:block">
+          <ConnectButton />
+        </div>
 
         <button className="md:hidden text-gray-600 hover:text-gray-900">
           <span className="material-symbols-outlined">menu</span>
