@@ -75,10 +75,7 @@ contract TEEVerifier is
 
     string public constant VERSION = "1.0.0-mvp";
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
+    constructor() {}
 
     function initialize(address _admin) external initializer {
         __AccessControl_init();

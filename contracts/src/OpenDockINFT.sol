@@ -129,10 +129,7 @@ contract OpenDockINFT is
 
     // ---- Constructor / Initializer ----
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
+    constructor() {}
 
     function initialize(
         string memory name_,
