@@ -24,6 +24,8 @@ contract DeployCore is Script {
     string constant NFT_SYMBOL      = "ODAI";
     /// @notice The 0G Storage info string — can be e.g. the indexer URL
     string constant STORAGE_INFO    = "https://indexer-storage-testnet-turbo.0g.ai";
+    /// @notice Base URL for tokenURI. Trailing slash required.
+    string constant BASE_URI        = "https://opendock.vercel.app/api/token/";
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -48,6 +50,7 @@ contract DeployCore is Script {
             address(verifier),
             deployer
         );
+        nft.setBaseURI(BASE_URI);
         console.log("OpenDockINFT:", address(nft));
 
         vm.stopBroadcast();

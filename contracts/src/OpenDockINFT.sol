@@ -76,6 +76,8 @@ contract OpenDockINFT is
         address[] authorizedUsers;
         address approvedUser;
         IntelligentData[] iDatas;
+        /// @notice 0G Storage root hash of the ERC-721 metadata JSON
+        bytes32 metadataHash;
     }
 
     /// @custom:storage-location erc7201:opendock.storage.OpenDockINFT
@@ -89,10 +91,12 @@ contract OpenDockINFT is
         // Non-standard: usage operator delegation: owner → operator → approved
         mapping(address owner => mapping(address operator => bool)) usageOperators;
         uint256 nextTokenId;
-        // Metadata
+        // Collection metadata
         string name;
         string symbol;
         string storageInfo;
+        /// @notice Base URL for tokenURI responses, e.g. "https://app.opendock.ai/api/token/"
+        string baseURI;
         // Verifier
         IERC7857DataVerifier verifier;
     }
@@ -179,6 +183,35 @@ contract OpenDockINFT is
         return _getStorage().storageInfo;
     }
 
+    /// @notice ERC-721 Metadata: returns the metadata JSON URL for a given token.
+    function tokenURI(uint256 tokenId) public view virtual returns (string memory) {
+        require(_exists(tokenId), "Token does not exist");
+        string memory base = _getStorage().baseURI;
+        if (bytes(base).length == 0) return "";
+        return string(abi.encodePacked(base, _toString(tokenId)));
+    }
+
+    /// @notice Returns the 0G Storage root hash of the metadata JSON for a token.
+    function metadataHashOf(uint256 tokenId) public view virtual returns (bytes32) {
+        require(_exists(tokenId), "Token does not exist");
+        return _getStorage().tokens[tokenId].metadataHash;
+    }
+
+    /// @dev Converts a uint256 to its decimal string representation.
+    function _toString(uint256 value) internal pure returns (string memory) {
+        if (value == 0) return "0";
+        uint256 temp = value;
+        uint256 digits;
+        while (temp != 0) { digits++; temp /= 10; }
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
+        }
+        return string(buffer);
+    }
+
     // ================================================================
     //  Admin
     // ================================================================
@@ -188,12 +221,17 @@ contract OpenDockINFT is
         _getStorage().verifier = IERC7857DataVerifier(newVerifier);
     }
 
+    function setBaseURI(string memory baseURI_) public virtual onlyRole(ADMIN_ROLE) {
+        _getStorage().baseURI = baseURI_;
+    }
+
     // ================================================================
     //  Minting & updating
     // ================================================================
 
     function mint(
         IntelligentData[] calldata iDatas,
+        bytes32 metadataHash_,
         address to
     ) public payable virtual returns (uint256 tokenId) {
         require(to != address(0), "Zero address");
@@ -203,6 +241,7 @@ contract OpenDockINFT is
         tokenId = $.nextTokenId++;
         TokenData storage newToken = $.tokens[tokenId];
         newToken.owner = to;
+        newToken.metadataHash = metadataHash_;
         for (uint256 i = 0; i < iDatas.length; i++) {
             newToken.iDatas.push(iDatas[i]);
         }

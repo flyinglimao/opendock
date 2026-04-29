@@ -5,11 +5,11 @@ export const INFT_ADDRESS =
   (process.env.NEXT_PUBLIC_NFT_ADDRESS as `0x${string}`) ?? "0x";
 
 /**
- * Minimal ABI — only what the frontend needs for minting.
+ * Minimal ABI — only what the frontend needs.
  * Full ABI lives in contracts/out/OpenDockINFT.sol/OpenDockINFT.json
  */
 export const INFT_ABI = [
-  // mint(IntelligentData[] iDatas, address to) returns (uint256)
+  // mint(IntelligentData[], bytes32 metadataHash, address to) returns (uint256)
   {
     name: "mint",
     type: "function",
@@ -23,17 +23,51 @@ export const INFT_ABI = [
           { name: "dataHash", type: "bytes32" },
         ],
       },
+      { name: "metadataHash_", type: "bytes32" },
       { name: "to", type: "address" },
     ],
     outputs: [{ name: "tokenId", type: "uint256" }],
   },
-  // ownerOf(uint256 tokenId) returns (address)
+  // ownerOf(uint256) returns (address)
   {
     name: "ownerOf",
     type: "function",
     stateMutability: "view",
     inputs: [{ name: "tokenId", type: "uint256" }],
     outputs: [{ name: "", type: "address" }],
+  },
+  // metadataHashOf(uint256) returns (bytes32)
+  {
+    name: "metadataHashOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  // tokenURI(uint256) returns (string)
+  {
+    name: "tokenURI",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "string" }],
+  },
+  // intelligentDataOf(uint256) returns ((string,bytes32)[])
+  {
+    name: "intelligentDataOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple[]",
+        components: [
+          { name: "dataDescription", type: "string" },
+          { name: "dataHash", type: "bytes32" },
+        ],
+      },
+    ],
   },
   // Minted event
   {
