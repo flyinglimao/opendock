@@ -1,22 +1,43 @@
 import type { NextConfig } from "next";
+import { createRequire } from "module";
+const require2 = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const NodePolyfillPlugin = require2("node-polyfill-webpack-plugin");
 
 const nextConfig: NextConfig = {
-  // Mark Node.js-only packages as server-external so Turbopack doesn't bundle them.
-  // They will be require()'d at runtime on the server (API routes / RSC).
-  serverExternalPackages: ["@0glabs/0g-serving-broker"],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  webpack(config: any, { isServer }: { isServer: boolean }) {
+    if (!isServer) {
+      // Polyfill Node.js built-ins in browser bundles so that
+      // @0glabs/0g-serving-broker works client-side.
+      config.plugins ??= [];
+      config.plugins.push(
+        new NodePolyfillPlugin({
+          // These cannot be polyfilled in a browser; stub them out.
+          excludeAliases: ["child_process", "fs"],
+        })
+      );
 
-  // Turbopack browser alias: stub Node-only built-ins for client-side bundles.
-  // The 0G storage SDK (browser build) uses dynamic imports to avoid fs/net/tls at runtime,
-  // but Turbopack still resolves them statically. These stubs prevent build errors.
-  turbopack: {
-    resolveAlias: {
-      fs:            { browser: "./lib/empty-module.ts" },
-      "fs/promises": { browser: "./lib/empty-module.ts" },
-      net:           { browser: "./lib/empty-module.ts" },
-      tls:           { browser: "./lib/empty-module.ts" },
-      child_process: { browser: "./lib/empty-module.ts" },
-      path:          { browser: "./lib/empty-module.ts" },
-    },
+      config.resolve ??= {};
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        // No meaningful browser polyfill for these Node.js-only APIs.
+        fs: false,
+        "fs/promises": false,
+        child_process: false,
+        // Stub out wagmi/viem Tempo wallet (unused; avoids 'accounts' resolve error).
+        "viem/tempo": false,
+      };
+
+      // Alias wagmi Tempo entry points to empty modules so webpack doesn't
+      // try to bundle the 'accounts' subpackage that doesn't resolve.
+      config.resolve.alias = {
+        ...(config.resolve.alias as Record<string, unknown>),
+        "wagmi/tempo": false,
+        "@wagmi/core/tempo": false,
+      };
+    }
+    return config;
   },
 };
 
