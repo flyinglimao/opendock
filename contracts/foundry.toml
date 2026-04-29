@@ -7,4 +7,9 @@ remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/",
 ]
 
+# Optimizer — required to keep OpenDockINFT under the EIP-170 24576-byte limit.
+# 200 runs = optimise for deployment size; raise if you expect very high call frequency.
+optimizer = true
+optimizer_runs = 200
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
