@@ -3,6 +3,7 @@ import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import TopNavBar from "@/components/TopNavBar";
 import Footer from "@/components/Footer";
+import Providers from "./providers";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -39,10 +40,13 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen flex flex-col bg-background text-on-background font-body-main text-body-main">
-        <TopNavBar />
-        <div className="flex-1 flex flex-col">{children}</div>
-        <Footer />
+        <Providers>
+          <TopNavBar />
+          <div className="flex-1 flex flex-col">{children}</div>
+          <Footer />
+        </Providers>
       </body>
     </html>
   );
 }
+
