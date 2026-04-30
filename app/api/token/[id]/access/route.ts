@@ -13,6 +13,10 @@ import { prisma } from "@/lib/db";
 
 const publicClient = createPublicClient({ chain: zgTestnet, transport: http() });
 
+function isUintString(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -54,10 +58,10 @@ export async function GET(
   });
 
   const rentOrder =
-    token?.rentOrderId
+    isUintString(token?.rentOrderId) && isUintString(token?.rentPricePerSecond)
       ? {
           orderId: token.rentOrderId,
-          pricePerSecond: token.rentPricePerSecond ?? "0",
+          pricePerSecond: token.rentPricePerSecond,
           maxDuration: token.rentMaxDuration ?? 0,
         }
       : null;

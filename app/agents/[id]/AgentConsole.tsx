@@ -11,6 +11,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAccount, useWalletClient, useBalance, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { parseEventLogs } from "viem";
 import { BrowserProvider } from "ethers";
 import { buildAuthMessage } from "@/lib/auth";
 import {
@@ -49,6 +50,10 @@ interface RentOrder {
   orderId: string;
   pricePerSecond: string;
   maxDuration: number;
+}
+
+function isUintString(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
 }
 
 // ---- Helper: build auth Bearer token ----
@@ -231,15 +236,7 @@ function OwnerRentalPanel({
           functionName: "setUsageOperator",
           args: [BigInt(tokenId), MARKETPLACE_ADDRESS, true],
         });
-        setPendingTx(txHash);
-        // Wait for it inline
-        await new Promise<void>((resolve) => {
-          const check = setInterval(async () => {
-            // The useWaitForTransactionReceipt hook will update; we just wait
-            resolve();
-            clearInterval(check);
-          }, 1000);
-        });
+        await signer.provider.waitForTransaction(txHash);
       }
 
       // Step 2: list rent order
@@ -254,19 +251,6 @@ function OwnerRentalPanel({
         args: [INFT_ADDRESS, BigInt(tokenId), pricePerSecond, BigInt(maxDuration)],
       });
       setPendingTx(listTxHash);
-
-      // Store order in DB — we'll parse orderId from the receipt event
-      // For now store a pending state; the receipt effect will update it
-      const bearer = await buildAuthBearer(tokenId, signer);
-      await fetch(`/api/token/${tokenId}/rent-order`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: bearer },
-        body: JSON.stringify({
-          orderId: "pending",
-          pricePerSecond: pricePerSecond.toString(),
-          maxDuration,
-        }),
-      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
@@ -278,33 +262,38 @@ function OwnerRentalPanel({
     if (!receipt || !pendingTx || !address) return;
     (async () => {
       try {
-        // Look for RentOrderCreated event
-        for (const log of receipt.logs) {
-          if (log.topics[0] === "0x" /* we'll check by presence of topics */) continue;
-          try {
-            const orderId = log.topics[1] ? BigInt(log.topics[1]).toString() : null;
-            if (!orderId) continue;
-            const signer = await getSigner();
-            const bearer = await buildAuthBearer(tokenId, signer);
-            const pricePerSecond = BigInt(
-              Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600)
-            ).toString();
-            const maxDuration = parseInt(maxHours) * 3600;
-            await fetch(`/api/token/${tokenId}/rent-order`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: bearer },
-              body: JSON.stringify({ orderId, pricePerSecond, maxDuration }),
-            });
-            onOrderUpdated();
-            break;
-          } catch { /* skip bad log */ }
+        const events = parseEventLogs({
+          abi: MARKETPLACE_ABI,
+          eventName: "RentOrderCreated",
+          logs: receipt.logs,
+        });
+        const event = events.find(
+          (item) => item.address.toLowerCase() === MARKETPLACE_ADDRESS.toLowerCase()
+        );
+        const orderId = event?.args.orderId?.toString();
+        if (!orderId) {
+          throw new Error("Rent order was created, but the order ID was not found in the receipt.");
         }
+        const signer = await getSigner();
+        const bearer = await buildAuthBearer(tokenId, signer);
+        const pricePerSecond = BigInt(
+          Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600)
+        ).toString();
+        const maxDuration = parseInt(maxHours) * 3600;
+        await fetch(`/api/token/${tokenId}/rent-order`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: bearer },
+          body: JSON.stringify({ orderId, pricePerSecond, maxDuration }),
+        });
+        onOrderUpdated();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
         setPendingTx(undefined);
       }
     })();
-  }, [receipt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [address, getSigner, maxHours, onOrderUpdated, pendingTx, priceOgPerHour, receipt, tokenId]);
 
   const handleCancelOrder = useCallback(async () => {
     if (!rentOrder || !address) return;
@@ -444,6 +433,9 @@ function RentPaymentPanel({
     hash: pendingTx,
     query: { enabled: !!pendingTx },
   });
+  const hasValidOrder =
+    isUintString(rentOrder.orderId) && isUintString(rentOrder.pricePerSecond);
+
   useEffect(() => {
     if (!receipt) return;
     queueMicrotask(() => {
@@ -454,6 +446,7 @@ function RentPaymentPanel({
   }, [receipt, onRented]);
 
   const totalWei = (() => {
+    if (!hasValidOrder) return 0n;
     try {
       const secs = BigInt(Math.round(parseFloat(hours) * 3600));
       return BigInt(rentOrder.pricePerSecond) * secs;
@@ -463,6 +456,10 @@ function RentPaymentPanel({
   })();
 
   const handleRent = useCallback(async () => {
+    if (!hasValidOrder) {
+      setError("Rental listing is still syncing. Please try again once the order is available.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -479,7 +476,21 @@ function RentPaymentPanel({
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  }, [hours, rentOrder, totalWei, writeContractAsync]);
+  }, [hasValidOrder, hours, rentOrder, totalWei, writeContractAsync]);
+
+  if (!hasValidOrder) {
+    return (
+      <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/30 p-xl flex flex-col items-center gap-md shadow-[0px_4px_20px_rgba(0,0,0,0.05)]">
+        <span className="material-symbols-outlined text-outline" style={{ fontSize: 40 }}>sync</span>
+        <p className="font-body-main text-body-main text-on-surface-variant text-center">
+          Rental listing is syncing
+        </p>
+        <p className="font-body-sub text-body-sub text-outline text-center max-w-sm">
+          The marketplace order is not available yet. Please wait for the on-chain order to finish syncing.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/30 p-xl flex flex-col items-center gap-md shadow-[0px_4px_20px_rgba(0,0,0,0.05)]">
@@ -487,31 +498,35 @@ function RentPaymentPanel({
       <p className="font-body-main text-body-main text-on-surface-variant text-center">
         Rent access to use this agent
       </p>
-      <div className="w-full max-w-xs flex flex-col gap-sm">
-        <div className="bg-surface-container rounded-xl p-md flex flex-col gap-xs">
-          <div className="flex justify-between text-sm">
-            <span className="text-on-surface-variant">Price</span>
-            <span className="font-data-mono text-on-surface">{formatPricePerHour(rentOrder.pricePerSecond)}</span>
+      <div className="w-full max-w-md min-w-[18rem] flex flex-col gap-md">
+        <div className="bg-surface-container rounded-xl p-md flex flex-col gap-sm">
+          <div className="flex items-center justify-between gap-lg text-sm">
+            <span className="text-on-surface-variant shrink-0">Price</span>
+            <span className="font-data-mono text-on-surface text-right whitespace-nowrap shrink-0">
+              {formatPricePerHour(rentOrder.pricePerSecond)}
+            </span>
           </div>
           {rentOrder.maxDuration > 0 && (
-            <div className="flex justify-between text-sm">
-              <span className="text-on-surface-variant">Max duration</span>
-              <span className="font-data-mono text-on-surface">{rentOrder.maxDuration / 3600} hours</span>
+            <div className="flex items-center justify-between gap-lg text-sm">
+              <span className="text-on-surface-variant shrink-0">Max duration</span>
+              <span className="font-data-mono text-on-surface text-right whitespace-nowrap shrink-0">
+                {rentOrder.maxDuration / 3600} hours
+              </span>
             </div>
           )}
         </div>
-        <div className="flex gap-sm items-center">
-          <span className="text-on-surface-variant text-sm">Rent for</span>
+        <div className="flex items-center justify-center gap-sm">
+          <span className="text-on-surface-variant text-sm shrink-0">Rent for</span>
           <input
             type="number" min="1" max={rentOrder.maxDuration > 0 ? rentOrder.maxDuration / 3600 : undefined}
             step="1" value={hours} onChange={(e) => setHours(e.target.value)}
-            className="flex-1 bg-surface-container border border-outline-variant rounded-xl p-sm font-data-mono text-on-surface focus:outline-none focus:border-primary text-sm"
+            className="bg-surface-container border border-outline-variant rounded-xl p-sm font-data-mono text-on-surface focus:outline-none focus:border-primary text-sm w-32 shrink-0"
           />
-          <span className="text-on-surface-variant text-sm">hours</span>
+          <span className="text-on-surface-variant text-sm shrink-0">hours</span>
         </div>
-        <div className="flex justify-between text-sm px-xs">
-          <span className="text-on-surface-variant">Total</span>
-          <span className="font-data-mono font-bold text-on-surface">
+        <div className="flex items-center justify-between gap-lg text-sm px-xs">
+          <span className="text-on-surface-variant shrink-0">Total</span>
+          <span className="font-data-mono font-bold text-on-surface text-right whitespace-nowrap shrink-0">
             {(Number(totalWei) / 1e18).toFixed(6)} OG
           </span>
         </div>

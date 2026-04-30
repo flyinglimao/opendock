@@ -14,6 +14,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyAuthHeader, checkOnChainAuth } from "@/lib/auth";
 
+function isUintString(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -36,8 +40,16 @@ export async function POST(
     maxDuration: number;
   };
 
-  if (!body.orderId) {
-    return NextResponse.json({ error: "orderId required" }, { status: 400 });
+  if (!isUintString(body.orderId)) {
+    return NextResponse.json({ error: "orderId must be a uint string" }, { status: 400 });
+  }
+
+  if (!isUintString(body.pricePerSecond)) {
+    return NextResponse.json({ error: "pricePerSecond must be a uint string" }, { status: 400 });
+  }
+
+  if (!Number.isSafeInteger(body.maxDuration) || body.maxDuration < 0) {
+    return NextResponse.json({ error: "maxDuration must be a non-negative integer" }, { status: 400 });
   }
 
   await prisma.agentToken.update({
