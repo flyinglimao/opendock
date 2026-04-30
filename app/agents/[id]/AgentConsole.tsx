@@ -600,7 +600,16 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     const res = await fetch(`/api/token/${tokenId}/system-prompt`, {
       headers: { Authorization: bearer },
     });
-    if (!res.ok) throw new Error("Failed to fetch system prompt");
+    if (!res.ok) {
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      if (res.status === 503) {
+        throw new Error(
+          data?.error ??
+            "Agent intelligence is temporarily unavailable while 0G Storage syncs."
+        );
+      }
+      throw new Error(data?.error ?? "Failed to fetch system prompt");
+    }
     const data = await res.json() as { systemPrompt: string };
     systemPromptRef.current = data.systemPrompt;
     return data.systemPrompt;

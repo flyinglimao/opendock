@@ -222,9 +222,8 @@ export default function CreateAgentForm() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             metadataHash,
-            dataHash: dataHash || undefined,
+            dataHash,
             owner,
-            systemPrompt: systemPrompt.trim() || undefined,
             rentPricePerSecond,
           }),
         });
@@ -270,7 +269,7 @@ export default function CreateAgentForm() {
         message: "Transaction confirmed but Minted event not found in logs.",
       });
     });
-  }, [receipt, step, agentName, systemPrompt]);
+  }, [receipt, step, agentName]);
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
@@ -358,22 +357,25 @@ export default function CreateAgentForm() {
       );
       console.log("Metadata upload tx:", metaTx, "hash:", metadataHash);
 
-      // ---- Step 3: Upload public intelligence data (only if KB file provided) ----
-      let dataHash: `0x${string}` | "" = "";
+      // ---- Step 3: Upload encrypted intelligence data ----
+      setStep({ id: "uploading_data" });
+      let kbText: string | undefined;
       if (kbFile) {
-        setStep({ id: "uploading_data" });
-        const kbText = await kbFile.text();
-        const { rootHash, txHash: dataTx } = await uploadAgentData(
-          {
-            name: agentName,
-            knowledgeBase: kbText,
-            knowledgeBaseName: kbFile.name,
-          },
-          signer
-        );
-        dataHash = rootHash;
-        console.log("Intelligence upload tx:", dataTx, "hash:", rootHash);
+        kbText = await kbFile.text();
       }
+      const {
+        rootHash: dataHash,
+        txHash: dataTx,
+      } = await uploadAgentData(
+        {
+          name: agentName,
+          systemPrompt,
+          knowledgeBase: kbText,
+          knowledgeBaseName: kbFile?.name,
+        },
+        signer
+      );
+      console.log("Encrypted intelligence upload tx:", dataTx, "hash:", dataHash);
 
       // ---- Step 4: Mint iNFT ----
       setStep({ id: "minting" });
@@ -382,7 +384,7 @@ export default function CreateAgentForm() {
         abi: INFT_ABI,
         functionName: "mint",
         args: [
-          dataHash ? [{ dataDescription: agentName, dataHash }] : [],
+          [{ dataDescription: "agent-intelligence", dataHash }],
           metadataHash,
           address,
         ],
@@ -407,6 +409,7 @@ export default function CreateAgentForm() {
     agentName,
     description,
     imageFile,
+    systemPrompt,
     rentalPriceOgPerHour,
     kbFile,
     isConnected,

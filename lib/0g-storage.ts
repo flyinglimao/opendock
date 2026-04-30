@@ -5,8 +5,8 @@
 //   1. metadataUpload — ERC-721 metadata JSON (name, description, image)
 //      NOTE: systemPrompt is intentionally excluded from public metadata;
 //            it is stored encrypted server-side and served only to authorized users.
-//   2. intelligenceUpload — public agent data (knowledge base only)
-//      NOTE: systemPrompt is not uploaded here; it is encrypted server-side.
+//   2. intelligenceUpload — encrypted agent intelligence data
+//      NOTE: systemPrompt and knowledge base are encrypted before 0G upload.
 //
 // The metadataHash is stored on-chain as the ERC-721 tokenURI source.
 // The intelligenceHash is stored as the IntelligentData dataHash.
@@ -39,9 +39,17 @@ export interface AgentMetadata {
 
 export interface AgentPayload {
   name: string;
+  systemPrompt: string;
   /** Raw text content of an optional knowledge-base file */
   knowledgeBase?: string;
   knowledgeBaseName?: string;
+}
+
+interface EncryptedAgentPayload {
+  version: 1;
+  algorithm: "AES-256-GCM";
+  iv: string;
+  ciphertext: string;
 }
 
 function encodeJSON(obj: unknown): File {
@@ -49,6 +57,48 @@ function encodeJSON(obj: unknown): File {
   return new File([bytes.buffer as ArrayBuffer], "data.json", {
     type: "application/json",
   });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function encryptAgentPayload(payload: AgentPayload): Promise<{
+  file: File;
+  key: string;
+}> {
+  const key = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt"]
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plain = new TextEncoder().encode(JSON.stringify({
+    name: payload.name,
+    systemPrompt: payload.systemPrompt,
+    knowledgeBase: payload.knowledgeBase ?? null,
+    knowledgeBaseName: payload.knowledgeBaseName ?? null,
+    version: 1,
+  }));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    plain
+  );
+  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  const envelope: EncryptedAgentPayload = {
+    version: 1,
+    algorithm: "AES-256-GCM",
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+  };
+
+  return {
+    file: encodeJSON(envelope),
+    key: bytesToBase64(rawKey),
+  };
 }
 
 export interface UploadResult {
@@ -103,20 +153,16 @@ export async function uploadMetadata(
 }
 
 /**
- * Upload the public agent intelligence payload (optional knowledge base) to 0G Storage.
+ * Encrypt and upload the private agent intelligence payload to 0G Storage.
  * Returns the root hash to be stored on-chain as IntelligentData.dataHash.
+ * The local symmetric key is intentionally not returned or persisted here;
+ * production decryption should happen through the TEE/reencryption flow.
  */
 export async function uploadAgentData(
   payload: AgentPayload,
   signer: import("ethers").Signer
 ): Promise<UploadResult> {
-  const obj = {
-    name: payload.name,
-    // Store knowledge base as plain UTF-8 text (callers ensure it's a text file).
-    knowledgeBase: payload.knowledgeBase ?? null,
-    knowledgeBaseName: payload.knowledgeBaseName ?? null,
-  };
-  const file = encodeJSON(obj);
+  const { file } = await encryptAgentPayload(payload);
   return uploadFile(file, signer);
 }
 

@@ -1,20 +1,16 @@
 // app/api/token/[id]/system-prompt/route.ts
-// Auth-gated endpoint for reading (and owner-only updating) the encrypted system prompt.
+// Auth-gated endpoint for preparing system prompt access from encrypted 0G intelligence.
 //
 // GET  /api/token/<id>/system-prompt
 //   Authorization: Bearer <base64(JSON({address, timestamp, signature}))>
 //   Requires: caller is owner or authorized user on-chain.
-//   Returns: { systemPrompt: string }
+//   Returns: { systemPrompt: string } once TEE decryption is available.
 //
-// POST /api/token/<id>/system-prompt
-//   Authorization: Bearer <...> (owner only)
-//   Body: { systemPrompt: string }
-//   Returns: { ok: true }
-
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyAuthHeader, checkOnChainAuth } from "@/lib/auth";
-import { encryptSystemPrompt, decryptSystemPrompt } from "@/lib/encryption";
+import { downloadZGJson } from "@/lib/0g-download";
+import type { EncryptedAgentPayload } from "@/lib/encryption";
 
 export async function GET(
   req: NextRequest,
@@ -37,43 +33,23 @@ export async function GET(
     return NextResponse.json({ error: "Token not found" }, { status: 404 });
   }
 
-  const systemPrompt = token.systemPrompt
-    ? decryptSystemPrompt(token.systemPrompt)
-    : "";
-
-  return NextResponse.json({ systemPrompt });
-}
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-
-  const address = await verifyAuthHeader(id, req.headers.get("Authorization"));
-  if (!address) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!token.dataHash) {
+    return NextResponse.json(
+      { error: "Encrypted intelligence is not registered yet" },
+      { status: 503 }
+    );
   }
 
-  const { isOwner } = await checkOnChainAuth(id, address);
-  if (!isOwner) {
-    return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+  const envelope = await downloadZGJson<EncryptedAgentPayload>(token.dataHash);
+  if (!envelope) {
+    return NextResponse.json(
+      { error: "Encrypted intelligence not available" },
+      { status: 503 }
+    );
   }
 
-  const body = (await req.json()) as { systemPrompt?: string };
-  const plain = body.systemPrompt ?? "";
-
-  await prisma.agentToken.upsert({
-    where: { tokenId: id },
-    create: {
-      tokenId: id,
-      metadataHash: "0x",
-      systemPrompt: encryptSystemPrompt(plain),
-    },
-    update: {
-      systemPrompt: encryptSystemPrompt(plain),
-    },
-  });
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(
+    { error: "TEE decryption is not available yet" },
+    { status: 503 }
+  );
 }

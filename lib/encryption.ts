@@ -1,5 +1,5 @@
 // lib/encryption.ts
-// Server-side AES-256-GCM encryption for system prompts.
+// Server-side AES-256-GCM helpers for private agent intelligence secrets.
 // Wire up the key via SYSTEM_PROMPT_KEY env var (64 hex chars = 32 bytes).
 // If the env var is missing a zero-padded placeholder is used — set a real key in production.
 
@@ -25,4 +25,43 @@ export function decryptSystemPrompt(encoded: string): string {
   const decipher = createDecipheriv("aes-256-gcm", KEY, iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
+}
+
+export interface EncryptedAgentPayload {
+  version: 1;
+  algorithm: "AES-256-GCM";
+  iv: string;
+  ciphertext: string;
+}
+
+export interface AgentIntelligencePayload {
+  name?: string;
+  systemPrompt?: string;
+  knowledgeBase?: string | null;
+  knowledgeBaseName?: string | null;
+  version?: number;
+}
+
+export function decryptAgentIntelligence(
+  envelope: EncryptedAgentPayload,
+  rawKeyBase64: string
+): AgentIntelligencePayload {
+  if (envelope.algorithm !== "AES-256-GCM") {
+    throw new Error("Unsupported intelligence encryption algorithm");
+  }
+
+  const key = Buffer.from(rawKeyBase64, "base64");
+  const iv = Buffer.from(envelope.iv, "base64");
+  const encrypted = Buffer.from(envelope.ciphertext, "base64");
+  const tag = encrypted.subarray(encrypted.length - 16);
+  const ciphertext = encrypted.subarray(0, encrypted.length - 16);
+
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  const plain = Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]).toString("utf8");
+
+  return JSON.parse(plain) as AgentIntelligencePayload;
 }

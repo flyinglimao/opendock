@@ -3,21 +3,19 @@
 // Saves the token record to DB and triggers a background sync from 0G Storage.
 //
 // POST /api/token/<tokenId>/register
-//   Body: { metadataHash, dataHash?, owner?, systemPrompt?, rentPricePerSecond? }
+//   Body: { metadataHash, dataHash?, owner?, rentPricePerSecond? }
 //
-// systemPrompt is encrypted with AES-256-GCM before being stored.
+// No intelligence keys or plaintext prompts are stored in DB.
 // The endpoint returns quickly; 0G download happens asynchronously.
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { downloadZGJson } from "@/lib/0g-download";
-import { encryptSystemPrompt } from "@/lib/encryption";
 
 interface RegisterBody {
   metadataHash: string;
   dataHash?: string;
   owner?: string;
-  systemPrompt?: string;
   rentPricePerSecond?: string;
 }
 
@@ -53,10 +51,6 @@ export async function POST(
     return NextResponse.json({ error: "metadataHash required" }, { status: 400 });
   }
 
-  const encryptedPrompt = body.systemPrompt
-    ? encryptSystemPrompt(body.systemPrompt)
-    : null;
-
   // Upsert the token record (idempotent — safe to call multiple times)
   await prisma.agentToken.upsert({
     where: { tokenId: id },
@@ -65,7 +59,6 @@ export async function POST(
       metadataHash: body.metadataHash,
       dataHash: body.dataHash ?? null,
       owner: body.owner ?? null,
-      systemPrompt: encryptedPrompt,
       rentPricePerSecond: body.rentPricePerSecond ?? null,
       metadataReady: false,
     },
@@ -73,7 +66,6 @@ export async function POST(
       metadataHash: body.metadataHash,
       dataHash: body.dataHash ?? null,
       owner: body.owner ?? null,
-      ...(encryptedPrompt !== null && { systemPrompt: encryptedPrompt }),
       ...(body.rentPricePerSecond !== undefined && {
         rentPricePerSecond: body.rentPricePerSecond,
       }),

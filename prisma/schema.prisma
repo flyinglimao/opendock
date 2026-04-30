@@ -26,7 +26,6 @@ model AgentToken {
   description  String?
   image        String?                  // served URL, e.g. /api/image/<hash>
   imageHash    String?                  // 0G root hash of the raw image
-  systemPrompt String?
 
   // 0G sync status
   metadataReady  Boolean  @default(false)
