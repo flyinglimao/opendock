@@ -351,7 +351,7 @@ export default function CreateAgentForm() {
           description,
           image: imageUrl,
           imageHash: imageHashHex,
-          // systemPrompt excluded from public metadata — stored encrypted server-side
+          // systemPrompt excluded from public metadata; it belongs in private iNFT data.
         },
         signer
       );

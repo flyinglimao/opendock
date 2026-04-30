@@ -6,7 +6,8 @@
 //   2. Authorized users (owner or renters who paid) can chat with the agent.
 //   3. Everyone else sees the rent panel and can pay to get access.
 //
-// System prompt is fetched server-side via /api/token/[id]/system-prompt (auth-gated).
+// Temporary simulation: private intelligence is encrypted with a server key on
+// 0G Storage, then returned only after our server verifies wallet authorization.
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAccount, useWalletClient, useBalance, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
@@ -565,9 +566,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
   const [rentOrder, setRentOrder] = useState<RentOrder | null>(null);
   const [accessLoading, setAccessLoading] = useState(false);
 
-  // System prompt (fetched on demand, never cached to localStorage)
   const systemPromptRef = useRef<string | null>(null);
-
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
@@ -607,7 +606,6 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     });
   }, [isConnected, address, refreshAccess]);
 
-  // Fetch & cache system prompt (requires wallet signature)
   const fetchSystemPrompt = useCallback(async (): Promise<string> => {
     if (systemPromptRef.current !== null) return systemPromptRef.current;
     const signer = await getSigner();
@@ -617,18 +615,12 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => null) as { error?: string } | null;
-      if (res.status === 503) {
-        throw new Error(
-          data?.error ??
-            "Agent intelligence is temporarily unavailable while 0G Storage syncs."
-        );
-      }
-      throw new Error(data?.error ?? "Failed to fetch system prompt");
+      throw new Error(data?.error ?? "Failed to fetch encrypted agent intelligence");
     }
-    const data = await res.json() as { systemPrompt: string };
+    const data = (await res.json()) as { systemPrompt: string };
     systemPromptRef.current = data.systemPrompt;
     return data.systemPrompt;
-  }, [tokenId, getSigner]);
+  }, [getSigner, tokenId]);
 
   // Ledger
   const refreshLedger = useCallback(async () => {
@@ -671,7 +663,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
 
   // Send message
   const sendMessage = useCallback(async () => {
-    if (!input.trim() || sending) return;
+    if (!input.trim() || sending || !address) return;
     const query = input.trim();
     setInput(""); setSending(true); setError(null);
 
@@ -679,9 +671,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     setMessages(newMessages);
 
     try {
-      // Fetch system prompt on first message (requires wallet signature)
       const systemPrompt = await fetchSystemPrompt();
-
       const broker = await getBroker();
       const { endpoint, model } = await broker.inference.getServiceMetadata(selectedProvider.address);
       const headers = await broker.inference.getRequestHeaders(selectedProvider.address);
@@ -699,14 +689,17 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
 
       const data = (await response.json()) as {
         choices: { message: { content: string } }[];
-        id?: string; chatID?: string;
+        id?: string;
+        chatID?: string;
       };
-      const content = data.choices?.[0]?.message?.content ?? "";
-
+      const content =
+        data.choices?.[0]?.message?.content ??
+        "";
       const chatID =
         response.headers.get("ZG-Res-Key") ||
         response.headers.get("zg-res-key") ||
-        data.id || data.chatID;
+        data.id ||
+        data.chatID;
       if (chatID) await broker.inference.processResponse(selectedProvider.address, chatID);
 
       setMessages([...newMessages, { role: "assistant", content }]);
@@ -718,7 +711,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [input, sending, messages, selectedProvider, fetchSystemPrompt, getBroker, refreshLedger]);
+  }, [address, input, sending, messages, fetchSystemPrompt, getBroker, selectedProvider, refreshLedger]);
 
   // ---- Not connected ----
   if (!isConnected) {
@@ -838,7 +831,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
                 Start a conversation with <strong className="text-on-surface-variant">{agentName}</strong>
               </p>
               <p className="font-body-sub text-body-sub text-center text-xs text-outline/70">
-                Your wallet will be prompted to sign once to retrieve the system prompt.
+                The server verifies your wallet before loading encrypted agent intelligence.
               </p>
             </div>
           )}

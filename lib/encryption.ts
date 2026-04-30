@@ -1,36 +1,18 @@
 // lib/encryption.ts
-// Server-side AES-256-GCM helpers for private agent intelligence secrets.
-// Wire up the key via SYSTEM_PROMPT_KEY env var (64 hex chars = 32 bytes).
-// If the env var is missing a zero-padded placeholder is used — set a real key in production.
+// Temporary server-key encryption for private agent intelligence.
+//
+// This simulates the future iNFT/TEE flow: 0G stores encrypted data, and the
+// app server gates access by wallet ownership/authorization before decrypting.
+// It is not equivalent to TEE because the server can decrypt plaintext.
 
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-
-const KEY_HEX = process.env.SYSTEM_PROMPT_KEY ?? "";
-const KEY = Buffer.from(KEY_HEX.padEnd(64, "0").slice(0, 64), "hex");
-
-// Format: base64( iv[12] | authTag[16] | ciphertext )
-export function encryptSystemPrompt(plain: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", KEY, iv);
-  const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, enc]).toString("base64");
-}
-
-export function decryptSystemPrompt(encoded: string): string {
-  const buf = Buffer.from(encoded, "base64");
-  const iv = buf.subarray(0, 12);
-  const tag = buf.subarray(12, 28);
-  const enc = buf.subarray(28);
-  const decipher = createDecipheriv("aes-256-gcm", KEY, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
-}
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 export interface EncryptedAgentPayload {
   version: 1;
+  mode: "opendock-server-key";
   algorithm: "AES-256-GCM";
   iv: string;
+  tag: string;
   ciphertext: string;
 }
 
@@ -42,26 +24,59 @@ export interface AgentIntelligencePayload {
   version?: number;
 }
 
-export function decryptAgentIntelligence(
-  envelope: EncryptedAgentPayload,
-  rawKeyBase64: string
-): AgentIntelligencePayload {
-  if (envelope.algorithm !== "AES-256-GCM") {
-    throw new Error("Unsupported intelligence encryption algorithm");
+function getServerKey(): Buffer {
+  const configured = process.env.SYSTEM_PROMPT_KEY;
+  if (configured && /^[0-9a-fA-F]{64}$/.test(configured)) {
+    return Buffer.from(configured, "hex");
   }
 
-  const key = Buffer.from(rawKeyBase64, "base64");
-  const iv = Buffer.from(envelope.iv, "base64");
-  const encrypted = Buffer.from(envelope.ciphertext, "base64");
-  const tag = encrypted.subarray(encrypted.length - 16);
-  const ciphertext = encrypted.subarray(0, encrypted.length - 16);
+  // Development fallback keeps local flows usable. Production should set a
+  // random 32-byte key encoded as 64 hex chars.
+  return createHash("sha256")
+    .update(configured || "opendock-development-system-prompt-key")
+    .digest();
+}
 
-  const decipher = createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(tag);
-  const plain = Buffer.concat([
-    decipher.update(ciphertext),
+export function encryptAgentIntelligence(
+  payload: AgentIntelligencePayload
+): EncryptedAgentPayload {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", getServerKey(), iv);
+  const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return {
+    version: 1,
+    mode: "opendock-server-key",
+    algorithm: "AES-256-GCM",
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+  };
+}
+
+export function decryptAgentIntelligence(
+  envelope: EncryptedAgentPayload
+): AgentIntelligencePayload {
+  if (
+    envelope.version !== 1 ||
+    envelope.mode !== "opendock-server-key" ||
+    envelope.algorithm !== "AES-256-GCM"
+  ) {
+    throw new Error("Unsupported intelligence encryption envelope");
+  }
+
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    getServerKey(),
+    Buffer.from(envelope.iv, "base64")
+  );
+  decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(envelope.ciphertext, "base64")),
     decipher.final(),
   ]).toString("utf8");
 
-  return JSON.parse(plain) as AgentIntelligencePayload;
+  return JSON.parse(plaintext) as AgentIntelligencePayload;
 }

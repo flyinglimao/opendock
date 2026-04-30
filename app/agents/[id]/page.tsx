@@ -19,7 +19,6 @@ interface Erc721Metadata {
   name?: string;
   description?: string;
   image?: string;
-  systemPrompt?: string;
 }
 
 async function fetchMetadata(metadataHash: `0x${string}`): Promise<Erc721Metadata> {
@@ -87,7 +86,6 @@ export default async function AgentDetailPage(
   const agentName = meta.name ?? `Agent #${id}`;
   const description = meta.description ?? "";
   const image = meta.image ?? "";
-  // systemPrompt intentionally not fetched here — served auth-gated via /api/token/[id]/system-prompt
 
   const ownerStr = owner! as string;
 

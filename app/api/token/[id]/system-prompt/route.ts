@@ -1,16 +1,26 @@
 // app/api/token/[id]/system-prompt/route.ts
-// Auth-gated endpoint for preparing system prompt access from encrypted 0G intelligence.
-//
-// GET  /api/token/<id>/system-prompt
-//   Authorization: Bearer <base64(JSON({address, timestamp, signature}))>
-//   Requires: caller is owner or authorized user on-chain.
-//   Returns: { systemPrompt: string } once TEE decryption is available.
-//
+// Temporary auth-gated decryption endpoint for server-key encrypted intelligence.
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyAuthHeader, checkOnChainAuth } from "@/lib/auth";
 import { downloadZGJson } from "@/lib/0g-download";
-import type { EncryptedAgentPayload } from "@/lib/encryption";
+import {
+  decryptAgentIntelligence,
+  type EncryptedAgentPayload,
+} from "@/lib/encryption";
+
+function buildSystemPrompt(
+  systemPrompt: string | undefined,
+  knowledgeBase: string | null | undefined,
+  knowledgeBaseName: string | null | undefined
+): string {
+  const base = systemPrompt?.trim() ?? "";
+  const kb = knowledgeBase?.trim();
+  if (!kb) return base;
+  const label = knowledgeBaseName ? `Knowledge base (${knowledgeBaseName})` : "Knowledge base";
+  return `${base}\n\n${label}:\n${kb}`;
+}
 
 export async function GET(
   req: NextRequest,
@@ -28,12 +38,11 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const token = await prisma.agentToken.findUnique({ where: { tokenId: id } });
-  if (!token) {
-    return NextResponse.json({ error: "Token not found" }, { status: 404 });
-  }
-
-  if (!token.dataHash) {
+  const token = await prisma.agentToken.findUnique({
+    where: { tokenId: id },
+    select: { dataHash: true },
+  });
+  if (!token?.dataHash) {
     return NextResponse.json(
       { error: "Encrypted intelligence is not registered yet" },
       { status: 503 }
@@ -48,8 +57,21 @@ export async function GET(
     );
   }
 
-  return NextResponse.json(
-    { error: "TEE decryption is not available yet" },
-    { status: 503 }
-  );
+  let payload;
+  try {
+    payload = decryptAgentIntelligence(envelope);
+  } catch {
+    return NextResponse.json(
+      { error: "Encrypted intelligence could not be decrypted with this server key" },
+      { status: 503 }
+    );
+  }
+
+  return NextResponse.json({
+    systemPrompt: buildSystemPrompt(
+      payload.systemPrompt,
+      payload.knowledgeBase,
+      payload.knowledgeBaseName
+    ),
+  });
 }

@@ -1,5 +1,22 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## iNFT Intelligence Encryption
+
+OpenDock currently uses a temporary server-key simulation for private agent intelligence.
+
+- Public ERC-721 metadata contains only agent metadata such as name, description, and image.
+- System prompts and knowledge-base text are POSTed to `/api/intelligence/encrypt`, encrypted on the app server with `SYSTEM_PROMPT_KEY`, then the encrypted envelope is uploaded to 0G Storage.
+- The database stores only public metadata/cache fields and the 0G `dataHash`; it does not store plaintext prompts or encryption keys.
+- When an owner or authorized renter chats with an agent, `/api/token/[id]/system-prompt` verifies the caller's wallet signature and on-chain owner/authorized status before decrypting the envelope with the server key.
+
+This is **not** the final 0G iNFT/TEE security model. In this simulation, the app server can decrypt the prompt, and authorized browser clients receive plaintext so they can call the current 0G Compute chat endpoint. The intended production model is to send encrypted intelligent data directly to 0G secure execution/TEE so neither the app server nor browser handles plaintext.
+
+Set `SYSTEM_PROMPT_KEY` to a random 32-byte key encoded as 64 hex characters:
+
+```bash
+openssl rand -hex 32
+```
+
 ## Getting Started
 
 First, run the development server:
