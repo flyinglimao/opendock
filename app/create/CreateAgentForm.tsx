@@ -84,6 +84,16 @@ function StepIndicator({ step }: { step: Step }) {
   );
 }
 
+const TEXT_MIME_PREFIXES = ["text/"];
+const TEXT_EXTENSIONS = [".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".toml", ".xml", ".log"];
+
+function isTextFile(file: File): boolean {
+  if (TEXT_MIME_PREFIXES.some((p) => file.type.startsWith(p))) return true;
+  if (file.type === "application/json") return true;
+  const name = file.name.toLowerCase();
+  return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
 export default function CreateAgentForm() {
   const router = useRouter();
   const { address, isConnected } = useAccount();
@@ -148,14 +158,24 @@ export default function CreateAgentForm() {
   }
 
   function handleKbChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setKbFile(e.target.files?.[0] ?? null);
+    const file = e.target.files?.[0] ?? null;
+    if (file && !isTextFile(file)) {
+      alert("Only plain text files are supported (TXT, MD, CSV, JSON, etc.)");
+      return;
+    }
+    setKbFile(file);
   }
 
   function handleKbDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsKbDragging(false);
     const file = e.dataTransfer.files?.[0] ?? null;
-    if (file) setKbFile(file);
+    if (!file) return;
+    if (!isTextFile(file)) {
+      alert("Only plain text files are supported (TXT, MD, CSV, JSON, etc.)");
+      return;
+    }
+    setKbFile(file);
   }
 
   const handleDeploy = useCallback(async () => {
@@ -205,16 +225,15 @@ export default function CreateAgentForm() {
 
       // ---- Step 3: Upload intelligence data ----
       setStep({ id: "uploading_data" });
-      let kbBytes: Uint8Array | undefined;
+      let kbText: string | undefined;
       if (kbFile) {
-        const buf = await kbFile.arrayBuffer();
-        kbBytes = new Uint8Array(buf);
+        kbText = await kbFile.text();
       }
       const { rootHash: dataHash, txHash: dataTx } = await uploadAgentData(
         {
           name: agentName,
           systemPrompt,
-          knowledgeBase: kbBytes,
+          knowledgeBase: kbText,
           knowledgeBaseName: kbFile?.name,
         },
         signer
@@ -521,14 +540,14 @@ export default function CreateAgentForm() {
                     Click to upload or drag and drop
                   </span>
                   <span className="font-body-sub text-body-sub text-outline mt-xs">
-                    PDF, TXT, or JSON (Max 50MB)
+                    TXT, MD, CSV, JSON, YAML… any plain text (Max 10MB)
                   </span>
                 </>
               )}
               <input
                 ref={kbInputRef}
                 type="file"
-                accept=".pdf,.txt,.json"
+                accept=".txt,.md,.csv,.json,.yaml,.yml,.toml,.xml,.log,text/*"
                 onChange={handleKbChange}
                 className="hidden"
               />

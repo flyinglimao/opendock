@@ -22,12 +22,30 @@ interface Erc721Metadata {
   name?: string;
   description?: string;
   image?: string;
+  imageHash?: string;
   systemPrompt?: string;
+}
+
+interface IntelligenceData {
+  name?: string;
+  systemPrompt?: string;
+  knowledgeBase?: string | null;
+  knowledgeBaseName?: string | null;
 }
 
 async function fetchMetadata(metadataHash: `0x${string}`): Promise<Erc721Metadata> {
   try {
     const res = await fetch(`${ZG_INDEXER}/file/${metadataHash}`, {
+      next: { revalidate: 3600 },
+    });
+    if (res.ok) return res.json();
+  } catch { /* fall through */ }
+  return {};
+}
+
+async function fetchIntelligenceData(dataHash: `0x${string}`): Promise<IntelligenceData> {
+  try {
+    const res = await fetch(`${ZG_INDEXER}/file/${dataHash}`, {
       next: { revalidate: 3600 },
     });
     if (res.ok) return res.json();
@@ -64,11 +82,11 @@ export default async function AgentDetailPage(
   const { id } = await params;
   const tokenId = BigInt(id);
 
-  // Read on-chain data
   let owner: string;
   let metadataHash: `0x${string}`;
+  let intelligentData: { dataDescription: string; dataHash: `0x${string}` }[];
   try {
-    [owner, metadataHash] = await Promise.all([
+    [owner, metadataHash, intelligentData] = await Promise.all([
       publicClient.readContract({
         address: INFT_ADDRESS,
         abi: INFT_ABI,
@@ -81,12 +99,29 @@ export default async function AgentDetailPage(
         functionName: "metadataHashOf",
         args: [tokenId],
       }) as Promise<`0x${string}`>,
+      publicClient.readContract({
+        address: INFT_ADDRESS,
+        abi: INFT_ABI,
+        functionName: "intelligentDataOf",
+        args: [tokenId],
+      }) as Promise<{ dataDescription: string; dataHash: `0x${string}` }[]>,
     ]);
   } catch {
     notFound();
   }
 
   const meta = await fetchMetadata(metadataHash!);
+
+  // Download intelligence data and inject KB into system prompt (server-side).
+  let systemPrompt = meta.systemPrompt ?? "";
+  if (intelligentData! && intelligentData.length > 0) {
+    const intel = await fetchIntelligenceData(intelligentData[0].dataHash);
+    if (intel.knowledgeBase) {
+      const kbName = intel.knowledgeBaseName ? ` (${intel.knowledgeBaseName})` : "";
+      systemPrompt =
+        `${systemPrompt}\n\n---\nKnowledge Base${kbName}:\n${intel.knowledgeBase}`.trim();
+    }
+  }
   const agentName = meta.name ?? `Agent #${id}`;
   const description = meta.description ?? "";
   const image = meta.image ?? "";
@@ -161,7 +196,7 @@ export default async function AgentDetailPage(
         </div>
 
         {/* Interaction Console — client component */}
-        <AgentConsole tokenId={id} agentName={agentName} systemPrompt={meta.systemPrompt ?? ""} />
+        <AgentConsole tokenId={id} agentName={agentName} systemPrompt={systemPrompt} />
       </div>
     </main>
   );

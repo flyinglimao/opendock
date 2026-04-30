@@ -40,8 +40,8 @@ export interface AgentMetadata {
 export interface AgentPayload {
   name: string;
   systemPrompt: string;
-  /** Raw bytes of an optional knowledge-base file */
-  knowledgeBase?: Uint8Array;
+  /** Raw text content of an optional knowledge-base file */
+  knowledgeBase?: string;
   knowledgeBaseName?: string;
 }
 
@@ -112,9 +112,8 @@ export async function uploadAgentData(
   const obj = {
     name: payload.name,
     systemPrompt: payload.systemPrompt,
-    knowledgeBase: payload.knowledgeBase
-      ? Buffer.from(payload.knowledgeBase).toString("base64")
-      : null,
+    // Store knowledge base as plain UTF-8 text (callers ensure it's a text file).
+    knowledgeBase: payload.knowledgeBase ?? null,
     knowledgeBaseName: payload.knowledgeBaseName ?? null,
   };
   const file = encodeJSON(obj);
