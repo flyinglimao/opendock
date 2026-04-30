@@ -6,6 +6,7 @@ import { zgTestnet } from "@/lib/chain";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 import { notFound } from "next/navigation";
 import AgentConsole from "./AgentConsole";
+import AgentAvailabilityGate from "./AgentAvailabilityGate";
 import type { Metadata } from "next";
 
 // ---- Public viem client (server-side) ----
@@ -196,7 +197,12 @@ export default async function AgentDetailPage(
         </div>
 
         {/* Interaction Console — client component */}
-        <AgentConsole tokenId={id} agentName={agentName} systemPrompt={systemPrompt} />
+        <AgentAvailabilityGate
+          tokenId={id}
+          agentName={agentName}
+          systemPrompt={systemPrompt}
+          AgentConsole={AgentConsole}
+        />
       </div>
     </main>
   );

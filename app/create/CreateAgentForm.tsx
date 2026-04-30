@@ -94,6 +94,67 @@ function isTextFile(file: File): boolean {
   return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
 }
 
+/** Resize image to max 512px on the longest side and convert to WebP via canvas. */
+async function resizeToWebP(file: File, maxPx = 512, quality = 0.85): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const { width: w, height: h } = img;
+      const scale = Math.min(1, maxPx / Math.max(w, h));
+      const tw = Math.round(w * scale);
+      const th = Math.round(h * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = tw;
+      canvas.height = th;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("Canvas 2D context unavailable"));
+      ctx.drawImage(img, 0, 0, tw, th);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return reject(new Error("Canvas toBlob failed"));
+          resolve(new File([blob], file.name.replace(/\.[^.]+$/, ".webp"), { type: "image/webp" }));
+        },
+        "image/webp",
+        quality
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
+    img.src = url;
+  });
+}
+// ---- localStorage helpers ----
+export interface MintedToken {
+  tokenId: string;  // stored as string for JSON safety
+  name: string;
+  txHash: string;
+  mintedAt: number; // unix ms
+}
+
+const LS_KEY = "opendock_minted_tokens";
+
+export function saveMintedToken(token: MintedToken) {
+  try {
+    const existing: MintedToken[] = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]");
+    // De-duplicate by tokenId
+    const updated = [
+      token,
+      ...existing.filter((t) => t.tokenId !== token.tokenId),
+    ];
+    localStorage.setItem(LS_KEY, JSON.stringify(updated));
+  } catch { /* ignore */ }
+}
+
+export function loadMintedTokens(): MintedToken[] {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+
 export default function CreateAgentForm() {
   const router = useRouter();
   const { address, isConnected } = useAccount();
@@ -128,6 +189,12 @@ export default function CreateAgentForm() {
       try {
         if (!log.topics[1]) continue;
         const tokenId = BigInt(log.topics[1]);
+        saveMintedToken({
+          tokenId: tokenId.toString(),
+          name: agentName,
+          txHash: step.txHash,
+          mintedAt: Date.now(),
+        });
         setStep({ id: "done", tokenId, txHash: step.txHash });
         return;
       } catch {
@@ -186,13 +253,14 @@ export default function CreateAgentForm() {
       const provider = new BrowserProvider(walletClient.transport);
       const signer = new JsonRpcSigner(provider, address);
 
-      // ---- Step 1: Upload image to 0G ----
+      // ---- Step 1: Upload image to 0G (resized to ≤512px, WebP) ----
       let imageHashHex = "";
-      let imageMimeType = "image/png";
+      let imageMimeType = "image/webp";
       if (imageFile) {
         setStep({ id: "uploading_image" });
+        const resized = await resizeToWebP(imageFile);
         const { rootHash, contentType, txHash: imgTx } = await uploadImage(
-          imageFile,
+          resized,
           signer
         );
         imageHashHex = rootHash;
