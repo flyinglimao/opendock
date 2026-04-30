@@ -1,12 +1,16 @@
 // app/api/token/[id]/route.ts
 // ERC-721 metadata endpoint.
-// Reads the metadataHash from the contract, downloads the JSON from 0G Storage,
-// and returns it with proper Content-Type.
+//
+// Strategy:
+//   1. DB hit (metadataReady) → serve cached JSON instantly.
+//   2. DB miss or not ready → read chain hash, fetch from 0G, back-fill DB.
+//   3. 0G unavailable → minimal fallback so marketplaces don't break.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, http } from "viem";
 import { zgTestnet } from "@/lib/chain";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
+import { prisma } from "@/lib/db";
 
 const ZG_INDEXER = process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
   "https://indexer-storage-testnet-turbo.0g.ai";
@@ -21,42 +25,82 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tokenId = BigInt(id);
 
-  // 1. Read metadataHash from contract
-  let metadataHash: `0x${string}`;
-  try {
-    metadataHash = (await publicClient.readContract({
-      address: INFT_ADDRESS,
-      abi: INFT_ABI,
-      functionName: "metadataHashOf",
-      args: [tokenId],
-    })) as `0x${string}`;
-  } catch {
-    return NextResponse.json({ error: "Token not found" }, { status: 404 });
+  // 1. DB fast path
+  const cached = await prisma.agentToken.findUnique({ where: { tokenId: id } });
+  if (cached?.metadataReady) {
+    return NextResponse.json(
+      {
+        name: cached.name ?? `OpenDock Agent #${id}`,
+        description: cached.description ?? "",
+        image: cached.image ?? "",
+        imageHash: cached.imageHash ?? "",
+        systemPrompt: cached.systemPrompt ?? "",
+      },
+      { headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400" } }
+    );
   }
 
-  // 2. Download metadata JSON from 0G Storage
-  // The indexer exposes a download endpoint at /file/<rootHash>
-  const downloadUrl = `${ZG_INDEXER}/file/${metadataHash}`;
-  let metadata: unknown;
+  // 2. Read metadataHash from DB or chain
+  let metadataHash: string | null = cached?.metadataHash ?? null;
+  if (!metadataHash) {
+    try {
+      metadataHash = (await publicClient.readContract({
+        address: INFT_ADDRESS,
+        abi: INFT_ABI,
+        functionName: "metadataHashOf",
+        args: [BigInt(id)],
+      })) as string;
+    } catch {
+      return NextResponse.json({ error: "Token not found" }, { status: 404 });
+    }
+  }
+
+  // 3. Download from 0G
   try {
-    const res = await fetch(downloadUrl, { next: { revalidate: 3600 } });
+    const res = await fetch(`${ZG_INDEXER}/file/${metadataHash}`, {
+      next: { revalidate: 3600 },
+    });
     if (!res.ok) throw new Error(`0G returned ${res.status}`);
-    metadata = await res.json();
-  } catch (err) {
-    console.error("0G download failed:", err);
-    // Fallback — return a minimal metadata object so marketplaces don't break
-    metadata = {
-      name: `OpenDock Agent #${id}`,
-      description: "",
-      image: "",
+    const meta = (await res.json()) as {
+      name?: string;
+      description?: string;
+      image?: string;
+      imageHash?: string;
+      systemPrompt?: string;
     };
-  }
 
-  return NextResponse.json(metadata, {
-    headers: {
-      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
-    },
-  });
+    // Back-fill DB
+    await prisma.agentToken.upsert({
+      where: { tokenId: id },
+      create: {
+        tokenId: id,
+        metadataHash,
+        name: meta.name ?? null,
+        description: meta.description ?? null,
+        image: meta.image ?? null,
+        imageHash: meta.imageHash ?? null,
+        systemPrompt: meta.systemPrompt ?? null,
+        metadataReady: true,
+      },
+      update: {
+        name: meta.name ?? null,
+        description: meta.description ?? null,
+        image: meta.image ?? null,
+        imageHash: meta.imageHash ?? null,
+        systemPrompt: meta.systemPrompt ?? null,
+        metadataReady: true,
+      },
+    });
+
+    return NextResponse.json(meta, {
+      headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400" },
+    });
+  } catch {
+    // Minimal fallback
+    return NextResponse.json(
+      { name: `OpenDock Agent #${id}`, description: "", image: "" },
+      { status: 200 }
+    );
+  }
 }

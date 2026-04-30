@@ -23,7 +23,7 @@ type Step =
   | { id: "uploading_metadata" }
   | { id: "uploading_data" }
   | { id: "minting" }
-  | { id: "waiting"; txHash: `0x${string}` }
+  | { id: "waiting"; txHash: `0x${string}`; metadataHash: string; dataHash: string; owner: string }
   | { id: "done"; tokenId: bigint; txHash: `0x${string}` }
   | { id: "error"; message: string };
 
@@ -185,6 +185,7 @@ export default function CreateAgentForm() {
 
   useEffect(() => {
     if (!receipt || step.id !== "waiting") return;
+    const { metadataHash, dataHash, owner } = step;
     for (const log of receipt.logs) {
       try {
         if (!log.topics[1]) continue;
@@ -195,6 +196,12 @@ export default function CreateAgentForm() {
           txHash: step.txHash,
           mintedAt: Date.now(),
         });
+        // Register in DB (fire-and-forget)
+        fetch(`/api/token/${tokenId}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ metadataHash, dataHash, owner }),
+        }).catch(() => {/* ignore */});
         setStep({ id: "done", tokenId, txHash: step.txHash });
         return;
       } catch {
@@ -322,7 +329,7 @@ export default function CreateAgentForm() {
       });
 
       // ---- Step 5: Wait ----
-      setStep({ id: "waiting", txHash: mintTxHash });
+      setStep({ id: "waiting", txHash: mintTxHash, metadataHash, dataHash, owner: address });
     } catch (err) {
       setStep({
         id: "error",

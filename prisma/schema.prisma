@@ -1,8 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../app/generated/prisma"
@@ -10,4 +8,35 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ---- OpenDock iNFT Token Cache ----
+// Mirrors the on-chain state and caches 0G Storage metadata for fast serving.
+model AgentToken {
+  // On-chain identity
+  tokenId      String   @id              // BigInt stored as string
+  chainId      Int      @default(16602)  // 0G Galileo testnet
+
+  // On-chain hashes (bytes32 hex strings)
+  metadataHash String
+  dataHash     String?                  // first IntelligentData entry
+
+  // Cached ERC-721 metadata (populated once 0G Storage is accessible)
+  name         String?
+  description  String?
+  image        String?                  // served URL, e.g. /api/image/<hash>
+  imageHash    String?                  // 0G root hash of the raw image
+  systemPrompt String?
+
+  // 0G sync status
+  metadataReady  Boolean  @default(false)
+
+  // Ownership
+  owner        String?                  // checksummed address
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([owner])
+  @@index([metadataReady])
 }
