@@ -56,7 +56,6 @@ export async function GET(
     description?: string;
     image?: string;
     imageHash?: string;
-    systemPrompt?: string;
   }>(metadataHash);
 
   if (!meta) return NextResponse.json({ available: false });
@@ -71,7 +70,6 @@ export async function GET(
       description: meta.description ?? null,
       image: meta.image ?? null,
       imageHash: meta.imageHash ?? null,
-      systemPrompt: meta.systemPrompt ?? null,
       metadataReady: true,
     },
     update: {
@@ -79,7 +77,6 @@ export async function GET(
       description: meta.description ?? null,
       image: meta.image ?? null,
       imageHash: meta.imageHash ?? null,
-      systemPrompt: meta.systemPrompt ?? null,
       metadataReady: true,
     },
   }).catch(() => {});

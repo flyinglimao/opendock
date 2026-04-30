@@ -34,6 +34,11 @@ model AgentToken {
   // Ownership
   owner        String?                  // checksummed address
 
+  // Rental / marketplace
+  rentOrderId        String?            // active marketplace rent order ID
+  rentPricePerSecond String?            // wei/second as decimal string
+  rentMaxDuration    Int?               // seconds (0 = unlimited)
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

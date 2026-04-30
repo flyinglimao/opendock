@@ -1,7 +1,6 @@
 import type { NextConfig } from "next";
 import { createRequire } from "module";
 const require2 = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const NodePolyfillPlugin = require2("node-polyfill-webpack-plugin");
 
 const nextConfig: NextConfig = {

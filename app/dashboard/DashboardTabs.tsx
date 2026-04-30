@@ -34,14 +34,16 @@ function useTokenStatus(tokenId: string): TokenStatus {
   }, [tokenId]);
 
   useEffect(() => {
-    check();
+    queueMicrotask(() => {
+      void check();
+    });
     // Poll every 15 s while syncing
     const interval = setInterval(() => {
       setStatus((s) => {
         if (s.state === "ready") { clearInterval(interval); return s; }
         return s;
       });
-      check();
+      void check();
     }, 15000);
     return () => clearInterval(interval);
   }, [check]);
@@ -138,7 +140,9 @@ export default function DashboardTabs() {
   const [tokens, setTokens] = useState<MintedToken[]>([]);
 
   useEffect(() => {
-    setTokens(loadMintedTokens());
+    queueMicrotask(() => {
+      setTokens(loadMintedTokens());
+    });
   }, []);
 
   return (

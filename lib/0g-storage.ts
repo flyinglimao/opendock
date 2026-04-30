@@ -2,8 +2,11 @@
 // Helpers for uploading data to 0G Storage and getting Merkle root hashes.
 //
 // Two separate uploads happen during agent creation:
-//   1. metadataUpload — ERC-721 metadata JSON (name, description, image, systemPrompt)
-//   2. intelligenceUpload — the actual agent intelligence data (system prompt + knowledge base)
+//   1. metadataUpload — ERC-721 metadata JSON (name, description, image)
+//      NOTE: systemPrompt is intentionally excluded from public metadata;
+//            it is stored encrypted server-side and served only to authorized users.
+//   2. intelligenceUpload — public agent data (knowledge base only)
+//      NOTE: systemPrompt is not uploaded here; it is encrypted server-side.
 //
 // The metadataHash is stored on-chain as the ERC-721 tokenURI source.
 // The intelligenceHash is stored as the IntelligentData dataHash.
@@ -22,24 +25,20 @@ export interface AgentMetadata {
   name: string;
   description: string;
   /**
-   * URL served by /api/token/[id]/image (computed from imageHash).
-   * Set this to `${baseUrl}/api/token/${tokenId}/image` after uploading the image.
+   * URL served by /api/image/<hash> (computed from imageHash).
    */
   image: string;
   /**
    * 0G Storage root hash of the raw image file.
-   * Used by /api/token/[id]/image to proxy the bytes.
    */
   imageHash: string;
-  /** System prompt — stored as an extra attribute, not part of core ERC-721 */
-  systemPrompt: string;
+  // systemPrompt intentionally excluded — stored encrypted server-side only
 }
 
 // ---- Intelligence payload ----
 
 export interface AgentPayload {
   name: string;
-  systemPrompt: string;
   /** Raw text content of an optional knowledge-base file */
   knowledgeBase?: string;
   knowledgeBaseName?: string;
@@ -104,7 +103,7 @@ export async function uploadMetadata(
 }
 
 /**
- * Upload the agent intelligence payload (system prompt + optional knowledge base) to 0G Storage.
+ * Upload the public agent intelligence payload (optional knowledge base) to 0G Storage.
  * Returns the root hash to be stored on-chain as IntelligentData.dataHash.
  */
 export async function uploadAgentData(
@@ -113,7 +112,6 @@ export async function uploadAgentData(
 ): Promise<UploadResult> {
   const obj = {
     name: payload.name,
-    systemPrompt: payload.systemPrompt,
     // Store knowledge base as plain UTF-8 text (callers ensure it's a text file).
     knowledgeBase: payload.knowledgeBase ?? null,
     knowledgeBaseName: payload.knowledgeBaseName ?? null,

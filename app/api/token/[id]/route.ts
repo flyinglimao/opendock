@@ -33,7 +33,6 @@ export async function GET(
         description: cached.description ?? "",
         image: cached.image ?? "",
         imageHash: cached.imageHash ?? "",
-        systemPrompt: cached.systemPrompt ?? "",
       },
       { headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400" } }
     );
@@ -60,7 +59,6 @@ export async function GET(
     description?: string;
     image?: string;
     imageHash?: string;
-    systemPrompt?: string;
   }>(metadataHash);
 
   if (meta) {
@@ -74,7 +72,6 @@ export async function GET(
         description: meta.description ?? null,
         image: meta.image ?? null,
         imageHash: meta.imageHash ?? null,
-        systemPrompt: meta.systemPrompt ?? null,
         metadataReady: true,
       },
       update: {
@@ -82,12 +79,12 @@ export async function GET(
         description: meta.description ?? null,
         image: meta.image ?? null,
         imageHash: meta.imageHash ?? null,
-        systemPrompt: meta.systemPrompt ?? null,
         metadataReady: true,
       },
     }).catch(() => {});
 
-    return NextResponse.json(meta, {
+    const { name, description, image, imageHash } = meta;
+    return NextResponse.json({ name, description, image, imageHash }, {
       headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400" },
     });
   }

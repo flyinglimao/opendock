@@ -87,6 +87,7 @@ export default async function AgentDetailPage(
   const agentName = meta.name ?? `Agent #${id}`;
   const description = meta.description ?? "";
   const image = meta.image ?? "";
+  // systemPrompt intentionally not fetched here — served auth-gated via /api/token/[id]/system-prompt
 
   const ownerStr = owner! as string;
 
@@ -158,7 +159,7 @@ export default async function AgentDetailPage(
         </div>
 
         {/* Interaction Console — client component */}
-        <AgentConsole tokenId={id} agentName={agentName} systemPrompt={meta.systemPrompt ?? ""} />
+        <AgentConsole tokenId={id} agentName={agentName} />
       </div>
     </main>
   );

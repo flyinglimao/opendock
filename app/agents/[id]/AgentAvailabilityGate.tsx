@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 interface Props {
   tokenId: string;
@@ -16,7 +16,6 @@ interface Props {
  */
 export default function AgentAvailabilityGate({ tokenId, agentName, systemPrompt, AgentConsole }: Props) {
   const isAvailable = systemPrompt.length > 0;
-  const [syncing, setSyncing] = useState(!isAvailable);
 
   useEffect(() => {
     if (isAvailable) return;
@@ -40,7 +39,7 @@ export default function AgentAvailabilityGate({ tokenId, agentName, systemPrompt
     return () => { stopped = true; };
   }, [isAvailable, tokenId]);
 
-  if (!isAvailable && syncing) {
+  if (!isAvailable) {
     return (
       <div className="w-full flex flex-col items-center justify-center py-20 gap-6 text-on-surface-variant">
         <div className="relative">

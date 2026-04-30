@@ -4,6 +4,9 @@
 export const INFT_ADDRESS =
   (process.env.NEXT_PUBLIC_NFT_ADDRESS as `0x${string}`) ?? "0x";
 
+export const MARKETPLACE_ADDRESS =
+  (process.env.NEXT_PUBLIC_MARKETPLACE_ADDRESS as `0x${string}`) ?? "0x";
+
 /**
  * Minimal ABI — only what the frontend needs.
  * Full ABI lives in contracts/out/OpenDockINFT.sol/OpenDockINFT.json
@@ -69,6 +72,37 @@ export const INFT_ABI = [
       },
     ],
   },
+  // authorizedUsersOf(uint256) returns (address[])
+  {
+    name: "authorizedUsersOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "address[]" }],
+  },
+  // setUsageOperator(uint256 tokenId, address operator, bool approved)
+  {
+    name: "setUsageOperator",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "tokenId", type: "uint256" },
+      { name: "operator", type: "address" },
+      { name: "approved", type: "bool" },
+    ],
+    outputs: [],
+  },
+  // isUsageOperator(address owner, address operator) returns (bool)
+  {
+    name: "isUsageOperator",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "operator", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
   // Minted event
   {
     name: "Minted",
@@ -77,6 +111,94 @@ export const INFT_ABI = [
       { name: "tokenId", type: "uint256", indexed: true },
       { name: "creator", type: "address", indexed: true },
       { name: "owner", type: "address", indexed: true },
+    ],
+  },
+] as const;
+
+export const MARKETPLACE_ABI = [
+  // listRent(address nftContract, uint256 tokenId, uint256 pricePerSecond, uint256 maxDuration) returns (uint256 orderId)
+  {
+    name: "listRent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "nftContract", type: "address" },
+      { name: "tokenId", type: "uint256" },
+      { name: "pricePerSecond", type: "uint256" },
+      { name: "maxDuration", type: "uint256" },
+    ],
+    outputs: [{ name: "orderId", type: "uint256" }],
+  },
+  // cancelRent(uint256 orderId)
+  {
+    name: "cancelRent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "orderId", type: "uint256" }],
+    outputs: [],
+  },
+  // executeRent(uint256 orderId, uint256 duration) payable
+  {
+    name: "executeRent",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "orderId", type: "uint256" },
+      { name: "duration", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // getRentOrder(uint256 orderId) returns (RentOrder)
+  {
+    name: "getRentOrder",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "orderId", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "owner", type: "address" },
+          { name: "nftContract", type: "address" },
+          { name: "tokenId", type: "uint256" },
+          { name: "pricePerSecond", type: "uint256" },
+          { name: "maxDuration", type: "uint256" },
+          { name: "status", type: "uint8" },
+        ],
+      },
+    ],
+  },
+  // isActivelyRented(address nftContract, uint256 tokenId) returns (bool)
+  {
+    name: "isActivelyRented",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "nftContract", type: "address" },
+      { name: "tokenId", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  // withdraw()
+  {
+    name: "withdraw",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  // RentOrderCreated event
+  {
+    name: "RentOrderCreated",
+    type: "event",
+    inputs: [
+      { name: "orderId", type: "uint256", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+      { name: "nftContract", type: "address", indexed: true },
+      { name: "tokenId", type: "uint256", indexed: false },
+      { name: "pricePerSecond", type: "uint256", indexed: false },
+      { name: "maxDuration", type: "uint256", indexed: false },
     ],
   },
 ] as const;

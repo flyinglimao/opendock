@@ -9,7 +9,8 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { BrowserProvider, JsonRpcSigner } from "ethers";
+import { BrowserProvider, JsonRpcSigner, parseUnits } from "ethers";
+import { decodeEventLog } from "viem";
 import { uploadMetadata, uploadAgentData, uploadImage } from "@/lib/0g-storage";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 
@@ -23,7 +24,15 @@ type Step =
   | { id: "uploading_metadata" }
   | { id: "uploading_data" }
   | { id: "minting" }
-  | { id: "waiting"; txHash: `0x${string}`; metadataHash: string; dataHash: string; owner: string }
+  | {
+      id: "waiting";
+      txHash: `0x${string}`;
+      metadataHash: string;
+      dataHash: string;
+      owner: string;
+      rentPricePerSecond?: string;
+    }
+  | { id: "registering"; txHash: `0x${string}` }
   | { id: "done"; tokenId: bigint; txHash: `0x${string}` }
   | { id: "error"; message: string };
 
@@ -33,6 +42,7 @@ const STEPS = [
   { key: "uploading_data", label: "Upload Intelligence" },
   { key: "minting", label: "Mint iNFT" },
   { key: "waiting", label: "Confirming" },
+  { key: "registering", label: "Registering" },
   { key: "done", label: "Done" },
 ] as const;
 
@@ -92,6 +102,19 @@ function isTextFile(file: File): boolean {
   if (file.type === "application/json") return true;
   const name = file.name.toLowerCase();
   return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+function rentPricePerSecondFromHourlyOg(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const hourlyWei = parseUnits(trimmed, 18);
+  if (hourlyWei < BigInt(0)) {
+    throw new Error("Rental price must be zero or greater.");
+  }
+
+  // Round up so very small non-zero hourly prices do not become free per second.
+  return ((hourlyWei + BigInt(3599)) / BigInt(3600)).toString();
 }
 
 /** Resize image to max 512px on the longest side and convert to WebP via canvas. */
@@ -165,6 +188,7 @@ export default function CreateAgentForm() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [rentalPriceOgPerHour, setRentalPriceOgPerHour] = useState("");
   const [kbFile, setKbFile] = useState<File | null>(null);
   const [isKbDragging, setIsKbDragging] = useState(false);
   const [isImgDragging, setIsImgDragging] = useState(false);
@@ -177,7 +201,9 @@ export default function CreateAgentForm() {
   const { writeContractAsync } = useWriteContract();
 
   const txHash =
-    step.id === "waiting" || step.id === "done" ? step.txHash : undefined;
+    step.id === "waiting" || step.id === "registering" || step.id === "done"
+      ? step.txHash
+      : undefined;
   const { data: receipt } = useWaitForTransactionReceipt({
     hash: txHash,
     query: { enabled: !!txHash },
@@ -185,34 +211,66 @@ export default function CreateAgentForm() {
 
   useEffect(() => {
     if (!receipt || step.id !== "waiting") return;
-    const { metadataHash, dataHash, owner } = step;
+    const { metadataHash, dataHash, owner, rentPricePerSecond } = step;
+    const waitingTxHash = step.txHash;
+
+    async function registerToken(tokenId: bigint) {
+      try {
+        setStep({ id: "registering", txHash: waitingTxHash });
+        const res = await fetch(`/api/token/${tokenId}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            metadataHash,
+            dataHash: dataHash || undefined,
+            owner,
+            systemPrompt: systemPrompt.trim() || undefined,
+            rentPricePerSecond,
+          }),
+        });
+
+        if (!res.ok) {
+          const message = await res.text();
+          throw new Error(message || "Failed to register minted agent.");
+        }
+
+        setStep({ id: "done", tokenId, txHash: waitingTxHash });
+      } catch (err) {
+        setStep({
+          id: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     for (const log of receipt.logs) {
       try {
-        if (!log.topics[1]) continue;
-        const tokenId = BigInt(log.topics[1]);
+        const decoded = decodeEventLog({
+          abi: INFT_ABI,
+          data: log.data,
+          topics: log.topics,
+        });
+        if (decoded.eventName !== "Minted") continue;
+        const tokenId = decoded.args.tokenId;
         saveMintedToken({
           tokenId: tokenId.toString(),
           name: agentName,
-          txHash: step.txHash,
+          txHash: waitingTxHash,
           mintedAt: Date.now(),
         });
-        // Register in DB (fire-and-forget)
-        fetch(`/api/token/${tokenId}/register`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ metadataHash, dataHash, owner }),
-        }).catch(() => {/* ignore */});
-        setStep({ id: "done", tokenId, txHash: step.txHash });
+        registerToken(tokenId);
         return;
       } catch {
         /* skip */
       }
     }
-    setStep({
-      id: "error",
-      message: "Transaction confirmed but Minted event not found in logs.",
+    queueMicrotask(() => {
+      setStep({
+        id: "error",
+        message: "Transaction confirmed but Minted event not found in logs.",
+      });
     });
-  }, [receipt, step.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [receipt, step, agentName, systemPrompt]);
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
@@ -257,6 +315,8 @@ export default function CreateAgentForm() {
     if (!isConnected || !walletClient || !address) return;
 
     try {
+      const rentPricePerSecond =
+        rentPricePerSecondFromHourlyOg(rentalPriceOgPerHour);
       const provider = new BrowserProvider(walletClient.transport);
       const signer = new JsonRpcSigner(provider, address);
 
@@ -292,13 +352,13 @@ export default function CreateAgentForm() {
           description,
           image: imageUrl,
           imageHash: imageHashHex,
-          systemPrompt,
+          // systemPrompt excluded from public metadata — stored encrypted server-side
         },
         signer
       );
       console.log("Metadata upload tx:", metaTx, "hash:", metadataHash);
 
-      // ---- Step 3: Upload intelligence data (only if KB file provided) ----
+      // ---- Step 3: Upload public intelligence data (only if KB file provided) ----
       let dataHash: `0x${string}` | "" = "";
       if (kbFile) {
         setStep({ id: "uploading_data" });
@@ -306,7 +366,6 @@ export default function CreateAgentForm() {
         const { rootHash, txHash: dataTx } = await uploadAgentData(
           {
             name: agentName,
-            systemPrompt,
             knowledgeBase: kbText,
             knowledgeBaseName: kbFile.name,
           },
@@ -330,7 +389,14 @@ export default function CreateAgentForm() {
       });
 
       // ---- Step 5: Wait ----
-      setStep({ id: "waiting", txHash: mintTxHash, metadataHash, dataHash, owner: address });
+      setStep({
+        id: "waiting",
+        txHash: mintTxHash,
+        metadataHash,
+        dataHash,
+        owner: address,
+        rentPricePerSecond,
+      });
     } catch (err) {
       setStep({
         id: "error",
@@ -341,7 +407,7 @@ export default function CreateAgentForm() {
     agentName,
     description,
     imageFile,
-    systemPrompt,
+    rentalPriceOgPerHour,
     kbFile,
     isConnected,
     walletClient,
@@ -355,6 +421,7 @@ export default function CreateAgentForm() {
     "uploading_data",
     "minting",
     "waiting",
+    "registering",
   ].includes(step.id);
 
   return (
@@ -571,6 +638,34 @@ export default function CreateAgentForm() {
             />
           </div>
 
+          {/* Rental Price */}
+          <div className="flex flex-col gap-sm">
+            <label
+              htmlFor="rental-price"
+              className="font-label-caps text-label-caps font-semibold text-on-surface"
+            >
+              Rental Price{" "}
+              <span className="font-normal text-outline">(optional)</span>
+            </label>
+            <div className="flex items-center gap-sm">
+              <input
+                id="rental-price"
+                type="number"
+                min="0"
+                step="0.001"
+                value={rentalPriceOgPerHour}
+                onChange={(e) => setRentalPriceOgPerHour(e.target.value)}
+                disabled={isRunning}
+                placeholder="e.g. 0.1"
+                className="bg-surface-container-lowest border border-outline-variant rounded-xl p-md font-body-main text-body-main text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 transition-all w-40 disabled:opacity-50"
+              />
+              <span className="font-body-sub text-body-sub text-on-surface-variant">OG / hour</span>
+            </div>
+            <p className="font-body-sub text-body-sub text-outline text-xs">
+              Leave blank for no public access. You can set up a marketplace listing after minting.
+            </p>
+          </div>
+
           {/* Knowledge Base */}
           <div className="flex flex-col gap-sm">
             <span className="font-label-caps text-label-caps font-semibold text-on-surface">
@@ -648,6 +743,7 @@ export default function CreateAgentForm() {
                     {step.id === "uploading_data" && "Uploading intelligence…"}
                     {step.id === "minting" && "Minting…"}
                     {step.id === "waiting" && "Confirming…"}
+                    {step.id === "registering" && "Registering…"}
                   </>
                 ) : (
                   <>
