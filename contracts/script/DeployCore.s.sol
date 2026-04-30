@@ -4,10 +4,11 @@ pragma solidity ^0.8.20;
 import {Script, console} from "forge-std/Script.sol";
 import {TEEVerifier} from "../src/TEEVerifier.sol";
 import {OpenDockINFT} from "../src/OpenDockINFT.sol";
+import {OpenDockMarketplace} from "../src/OpenDockMarketplace.sol";
 
 /**
  * @title  DeployCore
- * @notice Deploys TEEVerifier + OpenDockINFT on 0G Testnet (chain 16602).
+ * @notice Deploys TEEVerifier + OpenDockINFT + OpenDockMarketplace on 0G Testnet (chain 16602).
  *
  * Usage:
  *   forge script script/DeployCore.s.sol \
@@ -20,16 +21,19 @@ import {OpenDockINFT} from "../src/OpenDockINFT.sol";
  */
 contract DeployCore is Script {
     // ---- Adjust these before deploying ----
-    string constant NFT_NAME        = "OpenDock Agent";
-    string constant NFT_SYMBOL      = "ODAI";
+    string constant NFT_NAME = "OpenDock Agent";
+    string constant NFT_SYMBOL = "ODAI";
     /// @notice The 0G Storage info string — can be e.g. the indexer URL
-    string constant STORAGE_INFO    = "https://indexer-storage-testnet-turbo.0g.ai";
+    string constant STORAGE_INFO =
+        "https://indexer-storage-testnet-turbo.0g.ai";
     /// @notice Base URL for tokenURI. Trailing slash required.
-    string constant BASE_URI        = "https://opendock.vercel.app/api/token/";
+    string constant BASE_URI = "https://opendock.vercel.app/api/token/";
+    /// @notice Marketplace protocol fee in basis points. 0 = no platform fee.
+    uint256 constant MARKETPLACE_FEE_BPS = 0;
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address deployer    = vm.addr(deployerKey);
+        address deployer = vm.addr(deployerKey);
 
         console.log("Deployer :", deployer);
         console.log("Chain ID :", block.chainid);
@@ -53,12 +57,18 @@ contract DeployCore is Script {
         nft.setBaseURI(BASE_URI);
         console.log("OpenDockINFT:", address(nft));
 
+        // 3. Deploy OpenDockMarketplace
+        OpenDockMarketplace marketplace = new OpenDockMarketplace();
+        marketplace.initialize(deployer, MARKETPLACE_FEE_BPS, deployer);
+        console.log("Marketplace :", address(marketplace));
+
         vm.stopBroadcast();
 
         // Print env vars to paste into .env
         console.log("\n--- paste into .env ---");
         console.log("NEXT_PUBLIC_CHAIN_ID=16602");
         console.log("NEXT_PUBLIC_NFT_ADDRESS=%s", address(nft));
+        console.log("NEXT_PUBLIC_MARKETPLACE_ADDRESS=%s", address(marketplace));
         console.log("NEXT_PUBLIC_VERIFIER_ADDRESS=%s", address(verifier));
     }
 }
