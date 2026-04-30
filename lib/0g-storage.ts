@@ -21,9 +21,17 @@ export const ZG_EVM_RPC =
 export interface AgentMetadata {
   name: string;
   description: string;
-  /** URL or data-URI for the agent avatar */
+  /**
+   * URL served by /api/token/[id]/image (computed from imageHash).
+   * Set this to `${baseUrl}/api/token/${tokenId}/image` after uploading the image.
+   */
   image: string;
-  /** Stored as an extra attribute, not part of core ERC-721 but useful for display */
+  /**
+   * 0G Storage root hash of the raw image file.
+   * Used by /api/token/[id]/image to proxy the bytes.
+   */
+  imageHash: string;
+  /** System prompt — stored as an extra attribute, not part of core ERC-721 */
   systemPrompt: string;
 }
 
@@ -49,6 +57,8 @@ export interface UploadResult {
   rootHash: `0x${string}`;
   /** The 0G Storage transaction hash */
   txHash: string | null;
+  /** MIME type of the uploaded file */
+  contentType: string;
 }
 
 async function uploadFile(
@@ -74,6 +84,8 @@ async function uploadFile(
   return {
     rootHash: rawHash as `0x${string}`,
     txHash: (tx as { txHash?: string } | null)?.txHash ?? null,
+    // content-type is not available from the SDK; caller must supply it
+    contentType: file.type || "application/octet-stream",
   };
 }
 
@@ -107,4 +119,16 @@ export async function uploadAgentData(
   };
   const file = encodeJSON(obj);
   return uploadFile(file, signer);
+}
+
+/**
+ * Upload a raw image file to 0G Storage.
+ * Returns the root hash used as imageHash in AgentMetadata,
+ * and the contentType for serving via /api/token/[id]/image.
+ */
+export async function uploadImage(
+  imageFile: File,
+  signer: import("ethers").Signer
+): Promise<UploadResult> {
+  return uploadFile(imageFile, signer);
 }
