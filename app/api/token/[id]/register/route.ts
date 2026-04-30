@@ -9,10 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-
-const ZG_INDEXER =
-  process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
-  "https://indexer-storage-testnet-turbo.0g.ai";
+import { downloadZGJson } from "@/lib/0g-download";
 
 interface RegisterBody {
   metadataHash: string;
@@ -22,32 +19,25 @@ interface RegisterBody {
 
 /** Try to fetch metadata from 0G and update the DB record. Fire-and-forget. */
 async function syncMetadataFromZG(tokenId: string, metadataHash: string) {
-  try {
-    const res = await fetch(`${ZG_INDEXER}/file/${metadataHash}`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return; // Not ready yet — client will poll /status
-    const meta = (await res.json()) as {
-      name?: string;
-      description?: string;
-      image?: string;
-      imageHash?: string;
-      systemPrompt?: string;
-    };
-    await prisma.agentToken.update({
-      where: { tokenId },
-      data: {
-        name: meta.name ?? null,
-        description: meta.description ?? null,
-        image: meta.image ?? null,
-        imageHash: meta.imageHash ?? null,
-        systemPrompt: meta.systemPrompt ?? null,
-        metadataReady: true,
-      },
-    });
-  } catch {
-    // Silently ignore — /status will retry later
-  }
+  const meta = await downloadZGJson<{
+    name?: string;
+    description?: string;
+    image?: string;
+    imageHash?: string;
+    systemPrompt?: string;
+  }>(metadataHash);
+  if (!meta) return; // Not ready yet — client will poll /status
+  await prisma.agentToken.update({
+    where: { tokenId },
+    data: {
+      name: meta.name ?? null,
+      description: meta.description ?? null,
+      image: meta.image ?? null,
+      imageHash: meta.imageHash ?? null,
+      systemPrompt: meta.systemPrompt ?? null,
+      metadataReady: true,
+    },
+  }).catch(() => {});
 }
 
 export async function POST(

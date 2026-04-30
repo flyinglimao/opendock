@@ -298,22 +298,23 @@ export default function CreateAgentForm() {
       );
       console.log("Metadata upload tx:", metaTx, "hash:", metadataHash);
 
-      // ---- Step 3: Upload intelligence data ----
-      setStep({ id: "uploading_data" });
-      let kbText: string | undefined;
+      // ---- Step 3: Upload intelligence data (only if KB file provided) ----
+      let dataHash: `0x${string}` | "" = "";
       if (kbFile) {
-        kbText = await kbFile.text();
+        setStep({ id: "uploading_data" });
+        const kbText = await kbFile.text();
+        const { rootHash, txHash: dataTx } = await uploadAgentData(
+          {
+            name: agentName,
+            systemPrompt,
+            knowledgeBase: kbText,
+            knowledgeBaseName: kbFile.name,
+          },
+          signer
+        );
+        dataHash = rootHash;
+        console.log("Intelligence upload tx:", dataTx, "hash:", rootHash);
       }
-      const { rootHash: dataHash, txHash: dataTx } = await uploadAgentData(
-        {
-          name: agentName,
-          systemPrompt,
-          knowledgeBase: kbText,
-          knowledgeBaseName: kbFile?.name,
-        },
-        signer
-      );
-      console.log("Intelligence upload tx:", dataTx, "hash:", dataHash);
 
       // ---- Step 4: Mint iNFT ----
       setStep({ id: "minting" });
@@ -322,7 +323,7 @@ export default function CreateAgentForm() {
         abi: INFT_ABI,
         functionName: "mint",
         args: [
-          [{ dataDescription: agentName, dataHash }],
+          dataHash ? [{ dataDescription: agentName, dataHash }] : [],
           metadataHash,
           address,
         ],

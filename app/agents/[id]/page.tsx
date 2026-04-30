@@ -7,16 +7,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createPublicClient, http } from "viem";
 import AgentConsole from "./AgentConsoleNoSSR";
+import { downloadZGJson } from "@/lib/0g-download";
 
 // ---- Public viem client (server-side) ----
 const publicClient = createPublicClient({
   chain: zgTestnet,
   transport: http(),
 });
-
-const ZG_INDEXER =
-  process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
-  "https://indexer-storage-testnet-turbo.0g.ai";
 
 interface Erc721Metadata {
   name?: string;
@@ -26,13 +23,7 @@ interface Erc721Metadata {
 }
 
 async function fetchMetadata(metadataHash: `0x${string}`): Promise<Erc721Metadata> {
-  try {
-    const res = await fetch(`${ZG_INDEXER}/file/${metadataHash}`, {
-      next: { revalidate: 3600 },
-    });
-    if (res.ok) return res.json();
-  } catch { /* fall through */ }
-  return {};
+  return (await downloadZGJson<Erc721Metadata>(metadataHash)) ?? {};
 }
 
 // ---- generateMetadata ----
@@ -48,6 +39,7 @@ export async function generateMetadata(
       args: [BigInt(id)],
     })) as `0x${string}`;
     const meta = await fetchMetadata(metadataHash);
+    console.log(meta)
     return {
       title: `${meta.name ?? `Agent #${id}`} — OpenDock`,
       description: meta.description ?? "An AI Agent on OpenDock",

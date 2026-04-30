@@ -11,11 +11,6 @@ const ZG_INDEXER =
   process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
   "https://indexer-storage-testnet-turbo.0g.ai";
 
-// Map common image extensions to MIME types (fallback if 0G doesn't set it).
-function guessMimeFromHash(_hash: string): string {
-  return "image/png"; // default; the stored file determines actual bytes
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ hash: string }> }
@@ -25,41 +20,31 @@ export async function GET(
     return NextResponse.json({ error: "Invalid hash" }, { status: 400 });
   }
 
-  // Content-type hint passed as ?type=image%2Fpng (set by the uploader).
-  // Falls back to sniffing the response or a generic default.
-  const typeHint = req.nextUrl.searchParams.get("type") || null;
+  // Content-type hint passed as ?type=image%2Fwebp (set by the uploader).
+  const typeHint = req.nextUrl.searchParams.get("type") || "image/webp";
 
-  const downloadUrl = `${ZG_INDEXER}/file/${hash}`;
-  let upstream: Response;
   try {
-    upstream = await fetch(downloadUrl, {
-      // Allow caching at edge/CDN level — image content is immutable.
-      next: { revalidate: 86400 },
-    });
-    if (!upstream.ok) {
-      return NextResponse.json(
-        { error: `0G returned ${upstream.status}` },
-        { status: 404 }
-      );
+    const { Indexer } = await import("@0gfoundation/0g-ts-sdk");
+    const indexer = new Indexer(ZG_INDEXER);
+    const [blob, err] = await indexer.downloadToBlob(hash);
+    if (err !== null || !blob) {
+      console.error("[image] downloadToBlob error", err);
+      return NextResponse.json({ error: "File not available" }, { status: 404 });
     }
+
+    const buffer = await blob.arrayBuffer();
+    const contentType = blob.type || typeHint;
+
+    return new NextResponse(buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        // Immutable — hash is a content address, so it never changes.
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    });
   } catch (err) {
+    console.error("[image] error", err);
     return NextResponse.json({ error: String(err) }, { status: 502 });
   }
-
-  // Detect content-type: prefer caller's hint, then upstream header, then guess.
-  const contentType =
-    typeHint ||
-    upstream.headers.get("content-type") ||
-    guessMimeFromHash(hash);
-
-  const body = await upstream.arrayBuffer();
-
-  return new NextResponse(body, {
-    status: 200,
-    headers: {
-      "Content-Type": contentType,
-      // Immutable — hash is a content address, so it never changes.
-      "Cache-Control": "public, max-age=31536000, immutable",
-    },
-  });
 }

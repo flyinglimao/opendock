@@ -11,9 +11,7 @@ import { createPublicClient, http } from "viem";
 import { zgTestnet } from "@/lib/chain";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
-
-const ZG_INDEXER = process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
-  "https://indexer-storage-testnet-turbo.0g.ai";
+import { downloadZGJson } from "@/lib/0g-download";
 
 const publicClient = createPublicClient({
   chain: zgTestnet,
@@ -57,20 +55,16 @@ export async function GET(
   }
 
   // 3. Download from 0G
-  try {
-    const res = await fetch(`${ZG_INDEXER}/file/${metadataHash}`, {
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) throw new Error(`0G returned ${res.status}`);
-    const meta = (await res.json()) as {
-      name?: string;
-      description?: string;
-      image?: string;
-      imageHash?: string;
-      systemPrompt?: string;
-    };
+  const meta = await downloadZGJson<{
+    name?: string;
+    description?: string;
+    image?: string;
+    imageHash?: string;
+    systemPrompt?: string;
+  }>(metadataHash);
 
-    // Back-fill DB
+  if (meta) {
+    // Back-fill DB (best-effort)
     await prisma.agentToken.upsert({
       where: { tokenId: id },
       create: {
@@ -91,16 +85,16 @@ export async function GET(
         systemPrompt: meta.systemPrompt ?? null,
         metadataReady: true,
       },
-    });
+    }).catch(() => {});
 
     return NextResponse.json(meta, {
       headers: { "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400" },
     });
-  } catch {
-    // Minimal fallback
-    return NextResponse.json(
-      { name: `OpenDock Agent #${id}`, description: "", image: "" },
-      { status: 200 }
-    );
   }
+
+  // Minimal fallback
+  return NextResponse.json(
+    { name: `OpenDock Agent #${id}`, description: "", image: "" },
+    { status: 200 }
+  );
 }

@@ -11,10 +11,7 @@ import { createPublicClient, http } from "viem";
 import { zgTestnet } from "@/lib/chain";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
-
-const ZG_INDEXER =
-  process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
-  "https://indexer-storage-testnet-turbo.0g.ai";
+import { downloadZGJson } from "@/lib/0g-download";
 
 const publicClient = createPublicClient({
   chain: zgTestnet,
@@ -53,49 +50,44 @@ export async function GET(
     }
   }
 
-  // 3. Try 0G indexer
-  try {
-    const res = await fetch(`${ZG_INDEXER}/file/${metadataHash}`, { cache: "no-store" });
-    if (!res.ok) return NextResponse.json({ available: false });
+  // 3. Try 0G
+  const meta = await downloadZGJson<{
+    name?: string;
+    description?: string;
+    image?: string;
+    imageHash?: string;
+    systemPrompt?: string;
+  }>(metadataHash);
 
-    const meta = (await res.json()) as {
-      name?: string;
-      description?: string;
-      image?: string;
-      imageHash?: string;
-      systemPrompt?: string;
-    };
+  if (!meta) return NextResponse.json({ available: false });
 
-    // Back-fill DB
-    await prisma.agentToken.upsert({
-      where: { tokenId: id },
-      create: {
-        tokenId: id,
-        metadataHash,
-        name: meta.name ?? null,
-        description: meta.description ?? null,
-        image: meta.image ?? null,
-        imageHash: meta.imageHash ?? null,
-        systemPrompt: meta.systemPrompt ?? null,
-        metadataReady: true,
-      },
-      update: {
-        name: meta.name ?? null,
-        description: meta.description ?? null,
-        image: meta.image ?? null,
-        imageHash: meta.imageHash ?? null,
-        systemPrompt: meta.systemPrompt ?? null,
-        metadataReady: true,
-      },
-    });
+  // Back-fill DB (best-effort)
+  await prisma.agentToken.upsert({
+    where: { tokenId: id },
+    create: {
+      tokenId: id,
+      metadataHash,
+      name: meta.name ?? null,
+      description: meta.description ?? null,
+      image: meta.image ?? null,
+      imageHash: meta.imageHash ?? null,
+      systemPrompt: meta.systemPrompt ?? null,
+      metadataReady: true,
+    },
+    update: {
+      name: meta.name ?? null,
+      description: meta.description ?? null,
+      image: meta.image ?? null,
+      imageHash: meta.imageHash ?? null,
+      systemPrompt: meta.systemPrompt ?? null,
+      metadataReady: true,
+    },
+  }).catch(() => {});
 
-    return NextResponse.json({
-      available: true,
-      name: meta.name,
-      description: meta.description,
-      image: meta.image,
-    });
-  } catch {
-    return NextResponse.json({ available: false });
-  }
+  return NextResponse.json({
+    available: true,
+    name: meta.name,
+    description: meta.description,
+    image: meta.image,
+  });
 }
