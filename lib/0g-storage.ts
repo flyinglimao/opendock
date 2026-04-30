@@ -76,7 +76,9 @@ async function uploadFile(
   if (!rawHash) throw new Error("0G Merkle tree returned empty root hash");
 
   const indexer = new Indexer(ZG_INDEXER_URL);
-  const [tx, uploadErr] = await indexer.upload(blob, ZG_EVM_RPC, signer);
+  const [tx, uploadErr] = await indexer.upload(blob, ZG_EVM_RPC, signer, undefined, undefined, {
+    gasPrice: BigInt(20_000_000_000), // 20 GWEI
+  });
   if (uploadErr !== null) {
     throw new Error(`0G upload error: ${uploadErr}`);
   }

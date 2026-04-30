@@ -25,6 +25,8 @@ const nextConfig: NextConfig = {
         fs: false,
         "fs/promises": false,
         child_process: false,
+        readline: false,
+        "pino-pretty": false,
         // Stub out wagmi/viem Tempo wallet (unused; avoids 'accounts' resolve error).
         "viem/tempo": false,
       };
@@ -35,6 +37,7 @@ const nextConfig: NextConfig = {
         ...(config.resolve.alias as Record<string, unknown>),
         "wagmi/tempo": false,
         "@wagmi/core/tempo": false,
+        "@react-native-async-storage/async-storage": false,
       };
     }
     return config;
