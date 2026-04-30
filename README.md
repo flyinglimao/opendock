@@ -7,9 +7,10 @@ OpenDock currently uses a temporary server-key simulation for private agent inte
 - Public ERC-721 metadata contains only agent metadata such as name, description, and image.
 - System prompts and knowledge-base text are POSTed to `/api/intelligence/encrypt`, encrypted on the app server with `SYSTEM_PROMPT_KEY`, then the encrypted envelope is uploaded to 0G Storage.
 - The database stores only public metadata/cache fields and the 0G `dataHash`; it does not store plaintext prompts or encryption keys.
-- When an owner or authorized renter chats with an agent, `/api/token/[id]/system-prompt` verifies the caller's wallet signature and on-chain owner/authorized status before decrypting the envelope with the server key.
+- When an owner or authorized renter chats with an agent, `/api/token/[id]/chat` verifies the caller's wallet signature and on-chain owner/authorized status before decrypting the envelope with the server key.
+- The browser generates the 0G Compute serving `Authorization` header with the user's wallet and sends that header to `/api/token/[id]/chat`; the server then injects the decrypted system prompt and calls the provider. The current 0G serving broker treats the request `content` argument as deprecated/unused, so the serving header is not bound to the chat body.
 
-This is **not** the final 0G iNFT/TEE security model. In this simulation, the app server can decrypt the prompt, and authorized browser clients receive plaintext so they can call the current 0G Compute chat endpoint. The intended production model is to send encrypted intelligent data directly to 0G secure execution/TEE so neither the app server nor browser handles plaintext.
+This is **not** the final 0G iNFT/TEE security model. In this simulation, the app server can decrypt the prompt, but browser clients do not receive plaintext prompts. The intended production model is to send encrypted intelligent data directly to 0G secure execution/TEE so neither the app server nor browser handles plaintext.
 
 Set `SYSTEM_PROMPT_KEY` to a random 32-byte key encoded as 64 hex characters:
 

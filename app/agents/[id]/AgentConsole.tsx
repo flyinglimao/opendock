@@ -7,7 +7,7 @@
 //   3. Everyone else sees the rent panel and can pay to get access.
 //
 // Temporary simulation: private intelligence is encrypted with a server key on
-// 0G Storage, then returned only after our server verifies wallet authorization.
+// 0G Storage, then injected server-side after wallet authorization.
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAccount, useWalletClient, useBalance, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
@@ -566,7 +566,6 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
   const [rentOrder, setRentOrder] = useState<RentOrder | null>(null);
   const [accessLoading, setAccessLoading] = useState(false);
 
-  const systemPromptRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
@@ -605,22 +604,6 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
       void refreshAccess();
     });
   }, [isConnected, address, refreshAccess]);
-
-  const fetchSystemPrompt = useCallback(async (): Promise<string> => {
-    if (systemPromptRef.current !== null) return systemPromptRef.current;
-    const signer = await getSigner();
-    const bearer = await buildAuthBearer(tokenId, signer);
-    const res = await fetch(`/api/token/${tokenId}/system-prompt`, {
-      headers: { Authorization: bearer },
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => null) as { error?: string } | null;
-      throw new Error(data?.error ?? "Failed to fetch encrypted agent intelligence");
-    }
-    const data = (await res.json()) as { systemPrompt: string };
-    systemPromptRef.current = data.systemPrompt;
-    return data.systemPrompt;
-  }, [getSigner, tokenId]);
 
   // Ledger
   const refreshLedger = useCallback(async () => {
@@ -671,36 +654,40 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     setMessages(newMessages);
 
     try {
-      const systemPrompt = await fetchSystemPrompt();
+      const signer = await getSigner();
+      const bearer = await buildAuthBearer(tokenId, signer);
       const broker = await getBroker();
-      const { endpoint, model } = await broker.inference.getServiceMetadata(selectedProvider.address);
-      const headers = await broker.inference.getRequestHeaders(selectedProvider.address);
-
-      const chatMessages = [
-        ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
-        ...newMessages.map((m) => ({ role: m.role, content: m.content })),
-      ];
-
-      const response = await fetch(`${endpoint}/chat/completions`, {
+      const servingHeaders = await broker.inference.getRequestHeaders(selectedProvider.address);
+      const response = await fetch(`/api/token/${tokenId}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(headers as unknown as Record<string, string>) },
-        body: JSON.stringify({ messages: chatMessages, model }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: bearer,
+        },
+        body: JSON.stringify({
+          providerAddress: selectedProvider.address,
+          servingHeaders,
+          messages: newMessages,
+        }),
       });
 
-      const data = (await response.json()) as {
-        choices: { message: { content: string } }[];
-        id?: string;
-        chatID?: string;
-      };
-      const content =
-        data.choices?.[0]?.message?.content ??
-        "";
-      const chatID =
-        response.headers.get("ZG-Res-Key") ||
-        response.headers.get("zg-res-key") ||
-        data.id ||
-        data.chatID;
-      if (chatID) await broker.inference.processResponse(selectedProvider.address, chatID);
+      const data = (await response.json().catch(() => null)) as {
+        content?: string;
+        chatID?: string | null;
+        usage?: unknown;
+        error?: string;
+      } | null;
+      if (!response.ok) {
+        throw new Error(data?.error ?? "0G Compute request failed");
+      }
+      const content = data?.content ?? "";
+      if (data?.chatID) {
+        await broker.inference.processResponse(
+          selectedProvider.address,
+          data.chatID,
+          data.usage ? JSON.stringify(data.usage) : undefined
+        );
+      }
 
       setMessages([...newMessages, { role: "assistant", content }]);
       await refreshLedger();
@@ -711,7 +698,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [address, input, sending, messages, fetchSystemPrompt, getBroker, selectedProvider, refreshLedger]);
+  }, [address, input, sending, messages, tokenId, getSigner, getBroker, selectedProvider, refreshLedger]);
 
   // ---- Not connected ----
   if (!isConnected) {
@@ -831,7 +818,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
                 Start a conversation with <strong className="text-on-surface-variant">{agentName}</strong>
               </p>
               <p className="font-body-sub text-body-sub text-center text-xs text-outline/70">
-                The server verifies your wallet before loading encrypted agent intelligence.
+                The server verifies your wallet and keeps private agent instructions out of the browser.
               </p>
             </div>
           )}
