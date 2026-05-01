@@ -9,7 +9,7 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { BrowserProvider, JsonRpcSigner, parseUnits } from "ethers";
+import { BrowserProvider, JsonRpcSigner } from "ethers";
 import { decodeEventLog } from "viem";
 import { uploadMetadata, uploadAgentData, uploadImage } from "@/lib/0g-storage";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
@@ -30,7 +30,6 @@ type Step =
       metadataHash: string;
       dataHash: string;
       owner: string;
-      rentPricePerSecond?: string;
     }
   | { id: "registering"; txHash: `0x${string}` }
   | { id: "done"; tokenId: bigint; txHash: `0x${string}` }
@@ -104,19 +103,6 @@ function isTextFile(file: File): boolean {
   return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
 }
 
-function rentPricePerSecondFromHourlyOg(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-
-  const hourlyWei = parseUnits(trimmed, 18);
-  if (hourlyWei < BigInt(0)) {
-    throw new Error("Rental price must be zero or greater.");
-  }
-
-  // Round up so very small non-zero hourly prices do not become free per second.
-  return ((hourlyWei + BigInt(3599)) / BigInt(3600)).toString();
-}
-
 /** Resize image to max 512px on the longest side and convert to WebP via canvas. */
 async function resizeToWebP(file: File, maxPx = 512, quality = 0.85): Promise<File> {
   return new Promise((resolve, reject) => {
@@ -188,7 +174,6 @@ export default function CreateAgentForm() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [rentalPriceOgPerHour, setRentalPriceOgPerHour] = useState("");
   const [kbFile, setKbFile] = useState<File | null>(null);
   const [isKbDragging, setIsKbDragging] = useState(false);
   const [isImgDragging, setIsImgDragging] = useState(false);
@@ -211,7 +196,7 @@ export default function CreateAgentForm() {
 
   useEffect(() => {
     if (!receipt || step.id !== "waiting") return;
-    const { metadataHash, dataHash, owner, rentPricePerSecond } = step;
+    const { metadataHash, dataHash, owner } = step;
     const waitingTxHash = step.txHash;
 
     async function registerToken(tokenId: bigint) {
@@ -224,7 +209,6 @@ export default function CreateAgentForm() {
             metadataHash,
             dataHash,
             owner,
-            rentPricePerSecond,
           }),
         });
 
@@ -314,8 +298,6 @@ export default function CreateAgentForm() {
     if (!isConnected || !walletClient || !address) return;
 
     try {
-      const rentPricePerSecond =
-        rentPricePerSecondFromHourlyOg(rentalPriceOgPerHour);
       const provider = new BrowserProvider(walletClient.transport);
       const signer = new JsonRpcSigner(provider, address);
 
@@ -397,7 +379,6 @@ export default function CreateAgentForm() {
         metadataHash,
         dataHash,
         owner: address,
-        rentPricePerSecond,
       });
     } catch (err) {
       setStep({
@@ -410,7 +391,6 @@ export default function CreateAgentForm() {
     description,
     imageFile,
     systemPrompt,
-    rentalPriceOgPerHour,
     kbFile,
     isConnected,
     walletClient,
@@ -639,34 +619,6 @@ export default function CreateAgentForm() {
               rows={5}
               className="bg-surface-container-lowest border border-outline-variant rounded-xl p-md font-body-main text-body-main text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 transition-all w-full resize-none disabled:opacity-50"
             />
-          </div>
-
-          {/* Rental Price */}
-          <div className="flex flex-col gap-sm">
-            <label
-              htmlFor="rental-price"
-              className="font-label-caps text-label-caps font-semibold text-on-surface"
-            >
-              Rental Price{" "}
-              <span className="font-normal text-outline">(optional)</span>
-            </label>
-            <div className="flex items-center gap-sm">
-              <input
-                id="rental-price"
-                type="number"
-                min="0"
-                step="0.001"
-                value={rentalPriceOgPerHour}
-                onChange={(e) => setRentalPriceOgPerHour(e.target.value)}
-                disabled={isRunning}
-                placeholder="e.g. 0.1"
-                className="bg-surface-container-lowest border border-outline-variant rounded-xl p-md font-body-main text-body-main text-on-surface placeholder:text-outline focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 transition-all w-40 disabled:opacity-50"
-              />
-              <span className="font-body-sub text-body-sub text-on-surface-variant">OG / hour</span>
-            </div>
-            <p className="font-body-sub text-body-sub text-outline text-xs">
-              Leave blank for no public access. You can set up a marketplace listing after minting.
-            </p>
           </div>
 
           {/* Knowledge Base */}

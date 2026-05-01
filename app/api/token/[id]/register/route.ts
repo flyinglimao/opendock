@@ -3,7 +3,7 @@
 // Saves the token record to DB and triggers a background sync from 0G Storage.
 //
 // POST /api/token/<tokenId>/register
-//   Body: { metadataHash, dataHash?, owner?, rentPricePerSecond? }
+//   Body: { metadataHash, dataHash?, owner? }
 //
 // No intelligence keys or plaintext prompts are stored in DB.
 // The endpoint returns quickly; 0G download happens asynchronously.
@@ -16,7 +16,6 @@ interface RegisterBody {
   metadataHash: string;
   dataHash?: string;
   owner?: string;
-  rentPricePerSecond?: string;
 }
 
 /** Try to fetch metadata from 0G and update the DB record. Fire-and-forget. */
@@ -59,16 +58,12 @@ export async function POST(
       metadataHash: body.metadataHash,
       dataHash: body.dataHash ?? null,
       owner: body.owner ?? null,
-      rentPricePerSecond: body.rentPricePerSecond ?? null,
       metadataReady: false,
     },
     update: {
       metadataHash: body.metadataHash,
       dataHash: body.dataHash ?? null,
       owner: body.owner ?? null,
-      ...(body.rentPricePerSecond !== undefined && {
-        rentPricePerSecond: body.rentPricePerSecond,
-      }),
     },
   });
 
