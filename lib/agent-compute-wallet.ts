@@ -1,4 +1,4 @@
-// Server-side hosted compute wallet derivation.
+// Server-side platform wallet derivation.
 // Database rows store only HD paths and public addresses.
 
 import { prisma } from "@/lib/db";
@@ -84,7 +84,7 @@ export function getAgentComputeRelayerSigner(): Wallet {
   const privateKey = process.env.OPENDOCK_AGENT_RELAYER_PRIVATE_KEY?.trim();
   if (!privateKey) {
     throw new Error(
-      "Hosted compute wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY."
+      "Platform wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY."
     );
   }
   if (!isHexString(privateKey, 32)) {
@@ -102,7 +102,7 @@ function getRootHDWallet(): HDNodeWallet {
   const privateKey = process.env.OPENDOCK_AGENT_MASTER_PRIVATE_KEY?.trim();
   if (!privateKey) {
     throw new Error(
-      "Hosted compute wallet root is not configured. Set OPENDOCK_AGENT_WALLET_MNEMONIC or OPENDOCK_AGENT_MASTER_PRIVATE_KEY."
+      "Platform wallet root is not configured. Set OPENDOCK_AGENT_WALLET_MNEMONIC or OPENDOCK_AGENT_MASTER_PRIVATE_KEY."
     );
   }
   if (!isHexString(privateKey, 32)) {
@@ -165,7 +165,7 @@ export async function ensureAgentComputeWallet(
     }
   }
 
-  throw new Error("Unable to allocate a unique hosted compute wallet path.");
+  throw new Error("Unable to allocate a unique platform wallet path.");
 }
 
 // All agents for a user share the same hosted wallet keyed by userAddress only.

@@ -1411,12 +1411,12 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
           </div>
         )}
 
-        {/* Compute wallet mode */}
+        {/* Platform wallet mode */}
         <div className="px-lg pt-md">
           <div className="bg-surface-container rounded-xl border border-outline-variant/40 p-md flex flex-col sm:flex-row sm:items-center justify-between gap-sm">
             <div className="flex flex-col gap-xs min-w-0">
               <span className="font-label-caps text-label-caps font-semibold text-on-surface">
-                Compute wallet
+                Platform wallet
               </span>
               <span className="font-body-sub text-body-sub text-on-surface-variant text-xs">
                 {computeWalletMode === "hosted"

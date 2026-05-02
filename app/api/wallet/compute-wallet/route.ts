@@ -1,4 +1,4 @@
-// User-level (per-wallet) hosted compute wallet endpoint.
+// User-level (per-wallet) platform wallet endpoint.
 // Unlike /api/token/[id]/compute-wallet, this is keyed by the user's wallet
 // address only — no agent / tokenId required.
 
@@ -142,7 +142,7 @@ export async function GET(req: NextRequest) {
 
   if (!hasAgentComputeRootSecret()) {
     return NextResponse.json(
-      { error: "Hosted compute wallet root is not configured", configured: false },
+      { error: "Platform wallet root is not configured", configured: false },
       { status: 503 }
     );
   }

@@ -1,4 +1,4 @@
-// Hosted compute wallet endpoint.
+// Platform wallet endpoint.
 // GET is read-only and can derive public wallet/balance state from token + user
 // address. Mutating operations remain auth-gated.
 
@@ -212,7 +212,7 @@ export async function GET(
 
   if (!hasAgentComputeRootSecret()) {
     return NextResponse.json(
-      { error: "Hosted compute wallet root is not configured", configured: false },
+      { error: "Platform wallet root is not configured", configured: false },
       { status: 503 }
     );
   }
@@ -239,7 +239,7 @@ export async function POST(
 
   if (!hasAgentComputeRootSecret()) {
     return NextResponse.json(
-      { error: "Hosted compute wallet root is not configured", configured: false },
+      { error: "Platform wallet root is not configured", configured: false },
       { status: 503 }
     );
   }

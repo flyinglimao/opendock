@@ -1,4 +1,4 @@
-// Auth-gated one-time EIP-7702 setup for hosted compute wallets.
+// Auth-gated one-time EIP-7702 setup for platform wallets.
 
 import { NextRequest, NextResponse } from "next/server";
 import { Contract, getAddress, Interface, isAddress } from "ethers";
@@ -85,7 +85,7 @@ export async function POST(
 
   if (!hasAgentComputeRootSecret()) {
     return NextResponse.json(
-      { error: "Hosted compute wallet root is not configured", configured: false },
+      { error: "Platform wallet root is not configured", configured: false },
       { status: 503 }
     );
   }
@@ -95,7 +95,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Hosted compute wallet delegate is not configured. Set AGENT_COMPUTE_WALLET_DELEGATE_IMPLEMENTATION.",
+          "Platform wallet delegate is not configured. Set AGENT_COMPUTE_WALLET_DELEGATE_IMPLEMENTATION.",
       },
       { status: 503 }
     );
@@ -105,7 +105,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Hosted compute wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY.",
+          "Platform wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY.",
       },
       { status: 503 }
     );
@@ -133,7 +133,7 @@ export async function POST(
       if (!ownerReady && currentOwner) {
         return NextResponse.json(
           {
-            error: `Hosted wallet is already initialized for ${currentOwner}.`,
+            error: `Platform wallet is already initialized for ${currentOwner}.`,
             delegate: {
               ready: false,
               ownerAddress: currentOwner,
@@ -157,7 +157,7 @@ export async function POST(
         });
         const receipt = await tx.wait();
         if (!receipt || receipt.status !== 1) {
-          throw new Error("Hosted wallet owner initialization failed.");
+          throw new Error("Platform wallet owner initialization failed.");
         }
       }
 
@@ -178,7 +178,7 @@ export async function POST(
     if (delegatedImplementation) {
       return NextResponse.json(
         {
-          error: `Hosted wallet is already delegated to ${delegatedImplementation}.`,
+          error: `Platform wallet is already delegated to ${delegatedImplementation}.`,
           delegate: {
             ready: false,
             implementationAddress: normalizedImplementation,

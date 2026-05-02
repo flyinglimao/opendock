@@ -88,7 +88,7 @@ export async function POST(
   }
   if (walletMode === "hosted" && !hasAgentComputeRootSecret()) {
     return NextResponse.json(
-      { error: "Hosted compute wallet root is not configured" },
+      { error: "Platform wallet root is not configured" },
       { status: 503 }
     );
   }

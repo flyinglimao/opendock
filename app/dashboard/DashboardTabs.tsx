@@ -962,7 +962,7 @@ export default function DashboardTabs() {
   const dashboardTabs: Array<{ id: DashboardTab; label: string; icon: string }> = [
     { id: "agents", label: "My Agents", icon: "smart_toy" },
     { id: "automations", label: "Automation", icon: "routine" },
-    { id: "funds", label: "Compute Funds", icon: "account_balance_wallet" },
+    { id: "funds", label: "Platform Funds", icon: "account_balance_wallet" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
 

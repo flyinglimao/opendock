@@ -1,4 +1,4 @@
-// Auth-gated EIP-7702 setup for the user-level (per-wallet) hosted compute wallet.
+// Auth-gated EIP-7702 setup for the user-level (per-wallet) platform wallet.
 
 import { NextRequest, NextResponse } from "next/server";
 import { Contract, getAddress, Interface, isAddress } from "ethers";
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
 
   if (!hasAgentComputeRootSecret()) {
     return NextResponse.json(
-      { error: "Hosted compute wallet root is not configured", configured: false },
+      { error: "Platform wallet root is not configured", configured: false },
       { status: 503 }
     );
   }
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Hosted compute wallet delegate is not configured. Set AGENT_COMPUTE_WALLET_DELEGATE_IMPLEMENTATION.",
+          "Platform wallet delegate is not configured. Set AGENT_COMPUTE_WALLET_DELEGATE_IMPLEMENTATION.",
       },
       { status: 503 }
     );
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Hosted compute wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY.",
+          "Platform wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY.",
       },
       { status: 503 }
     );

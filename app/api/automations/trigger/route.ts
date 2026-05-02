@@ -216,7 +216,7 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
     throw new Error("Encrypted intelligence is not registered yet");
   }
   if (!hasAgentComputeRootSecret()) {
-    throw new Error("Hosted compute wallet root is not configured");
+    throw new Error("Platform wallet root is not configured");
   }
 
   const envelope = await downloadZGJson<EncryptedAgentPayload>(run.dataHash);

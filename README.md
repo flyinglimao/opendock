@@ -11,7 +11,7 @@ OpenDock bridges the gap between decentralized ownership and AI execution. By re
 - **iNFT (Intelligent NFT):** An ERC-7857 token (AI Agents NFT with Private Metadata) that owns its "intelligence". The metadata and system prompts are stored on-chain or via decentralized storage (0G).
 - **0G Storage Integration:** Uses the 0G Storage network to persist agent metadata and encrypted "Intelligent Data" envelopes, ensuring data availability without central reliance.
 - **Agent Loop:** A sophisticated backend execution environment that handles conversation history, tool calling (web search, blockchain interactions), and integration with the 0G Serving Broker.
-- **Hosted Compute Wallets:** Each user is assigned a single, dedicated hosted compute wallet. All agents for a user share the same wallet, which is primarily used to manage and pay for **LLM inference fees** via the 0G Serving system. The wallet utilizes **EIP-7702**, allowing the user to manage the wallet and its funds directly with their own key while delegating compute payment authority to the platform.
+- **Platform Wallets:** Each user is assigned a single, dedicated platform wallet. All agents for a user share the same wallet, which is primarily used to manage and pay for **LLM inference fees** via the 0G Serving system. The wallet utilizes **EIP-7702**, allowing the user to manage the wallet and its funds directly with their own key while delegating compute payment authority to the platform.
 - **Automations:** Cron-based scheduling system that allows agents to perform recurring tasks autonomously.
 
 ## ✨ Features
