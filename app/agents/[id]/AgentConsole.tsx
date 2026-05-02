@@ -215,11 +215,6 @@ function LedgerPanel({
             {walletAddress.slice(0, 6)}…{walletAddress.slice(-4)}
           </span>
         )}
-        {mode === "hosted" && (
-          <span>
-            Native {nativeBalance !== null ? `${nativeBalance.toFixed(6)} OG` : "—"}
-          </span>
-        )}
       </div>
       {needsHostedSetup && (
         <div className="bg-white/70 border border-amber-300 rounded-lg px-sm py-xs flex items-center gap-sm flex-wrap">
