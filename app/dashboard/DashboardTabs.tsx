@@ -16,6 +16,7 @@ import type { Config } from "wagmi";
 import { BrowserProvider, Contract, parseEther } from "ethers";
 import { buildSessionAuthMessage } from "@/lib/auth";
 import { COMPUTE_PROVIDERS } from "@/lib/compute-providers";
+import { isCronExpression } from "@/lib/cron";
 
 type DashboardTab = "agents" | "automations" | "funds" | "settings";
 type FundsTab = "ledger" | "providers";
@@ -197,12 +198,6 @@ function formatDashboardTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function isCronExpression(expression: string): boolean {
-  const fields = expression.trim().split(/\s+/);
-  if (fields.length !== 5) return false;
-  return fields.every((field) => /^[\d*,/-]+$/.test(field));
 }
 
 function getAuthSessionKey(address: string) {

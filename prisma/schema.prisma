@@ -65,8 +65,9 @@ model AgentConversation {
   updatedAt     DateTime @updatedAt
   lastMessageAt DateTime @default(now())
 
-  agentToken AgentToken                 @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
-  messages   AgentConversationMessage[]
+  agentToken     AgentToken                 @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
+  messages       AgentConversationMessage[]
+  automationRuns AgentAutomationRun[]
 
   @@index([tokenId, userAddress, lastMessageAt])
   @@index([userAddress])
@@ -119,18 +120,22 @@ model AgentAutomation {
 }
 
 model AgentAutomationRun {
-  id           String                   @id @default(cuid())
-  automationId String
-  status       AgentAutomationRunStatus @default(running)
-  summary      String?
-  output       String?                  @db.Text
-  error        String?                  @db.Text
-  startedAt    DateTime                 @default(now())
-  completedAt  DateTime?
-  createdAt    DateTime                 @default(now())
+  id             String                   @id @default(cuid())
+  automationId   String
+  conversationId String?
+  status         AgentAutomationRunStatus @default(running)
+  summary        String?
+  output         String?                  @db.Text
+  error          String?                  @db.Text
+  scheduledFor   DateTime
+  startedAt      DateTime                 @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime                 @default(now())
 
-  automation AgentAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automation   AgentAutomation    @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  conversation AgentConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
+  @@unique([automationId, scheduledFor])
   @@index([automationId, startedAt])
   @@index([status, startedAt])
 }
