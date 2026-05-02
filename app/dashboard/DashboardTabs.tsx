@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useBalance, useConfig, useWalletClient } from "wagmi";
@@ -194,25 +194,13 @@ async function createAuthSession(
 function AgentCard({
   agent,
   kind,
-  selected,
-  onSelect,
 }: {
   agent: DashboardAgent;
   kind: "owned" | "rented";
-  selected: boolean;
-  onSelect: () => void;
 }) {
   const displayName = agent.name ?? `Agent #${agent.tokenId}`;
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`bg-surface-container-lowest rounded-lg border text-left overflow-hidden transition-all hover:border-primary/60 ${
-        selected
-          ? "border-primary shadow-[0px_8px_28px_rgba(53,37,205,0.12)]"
-          : "border-outline-variant/40 shadow-[0px_4px_20px_rgba(0,0,0,0.04)]"
-      }`}
-    >
+    <article className="bg-surface-container-lowest rounded-lg border border-outline-variant/40 text-left overflow-hidden shadow-[0px_4px_20px_rgba(0,0,0,0.04)]">
       <div className="h-24 bg-surface-container-low relative overflow-hidden">
         {agent.image ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -258,12 +246,11 @@ function AgentCard({
         <Link
           href={`/agents/${agent.tokenId}`}
           className="mt-auto w-fit text-xs font-semibold text-primary hover:underline"
-          onClick={(event) => event.stopPropagation()}
         >
           Open agent
         </Link>
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -297,7 +284,6 @@ export default function DashboardTabs() {
     rented: [],
   });
   const [agentsLoading, setAgentsLoading] = useState(false);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [fundsTab, setFundsTab] = useState<FundsTab>("providers");
   const [walletLedger, setWalletLedger] = useState<WalletLedgerState | null>(null);
   const [cloudState, setCloudState] = useState<HostedComputeWalletState | null>(null);
@@ -327,12 +313,6 @@ export default function DashboardTabs() {
     status === "connecting" ||
     status === "reconnecting";
 
-  const allAgents = useMemo(
-    () => [...agents.owned, ...agents.rented],
-    [agents.owned, agents.rented]
-  );
-  const selectedAgent =
-    allAgents.find((agent) => agent.tokenId === selectedAgentId) ?? allAgents[0] ?? null;
   const walletNativeOg = nativeBalance ? Number(nativeBalance.value) / 1e18 : 0;
   const walletLedgerOg = weiToOg(walletLedger?.availableBalanceWei);
   const cloudLedgerOg = weiToOg(cloudState?.ledger.availableBalanceWei);
@@ -402,8 +382,6 @@ export default function DashboardTabs() {
       const data = (await res.json()) as DashboardAgentsResponse;
       if (!res.ok) throw new Error(data.error ?? "Failed to load agents");
       setAgents({ owned: data.owned, rented: data.rented });
-      const preferred = [...data.owned, ...data.rented][0]?.tokenId ?? null;
-      setSelectedAgentId((current) => current ?? preferred);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -648,7 +626,9 @@ export default function DashboardTabs() {
   // Load settings once authenticated
   useEffect(() => {
     if (!accountReady || !address || authStatus !== "ready") return;
-    void refreshSettings();
+    queueMicrotask(() => {
+      void refreshSettings();
+    });
   }, [accountReady, address, authStatus, refreshSettings]);
 
   useEffect(() => {
@@ -690,7 +670,6 @@ export default function DashboardTabs() {
       firstLoadRef.current = false;
       queueMicrotask(() => {
         setAgents({ owned: [], rented: [] });
-        setSelectedAgentId(null);
         setWalletLedger(null);
         setCloudState(null);
       });
@@ -961,8 +940,6 @@ export default function DashboardTabs() {
                   key={agent.tokenId}
                   agent={agent}
                   kind="owned"
-                  selected={selectedAgent?.tokenId === agent.tokenId}
-                  onSelect={() => setSelectedAgentId(agent.tokenId)}
                 />
               ))}
               <Link
@@ -986,8 +963,6 @@ export default function DashboardTabs() {
                     key={agent.tokenId}
                     agent={agent}
                     kind="rented"
-                    selected={selectedAgent?.tokenId === agent.tokenId}
-                    onSelect={() => setSelectedAgentId(agent.tokenId)}
                   />
                 ))}
               </div>
@@ -1005,21 +980,10 @@ export default function DashboardTabs() {
           <div>
             <h2 className="font-h2 text-h2 font-semibold text-on-surface">Compute Funds</h2>
             <p className="text-sm text-on-surface-variant">
-              Manage your wallet ledger and the selected agent platform wallet.
+              Manage your wallet ledger and platform wallet.
             </p>
           </div>
           <div className="flex items-center gap-sm">
-            <select
-              value={selectedAgent?.tokenId ?? ""}
-              onChange={(event) => setSelectedAgentId(event.target.value || null)}
-              className="rounded-lg border border-outline-variant bg-surface-container px-sm py-xs text-sm text-on-surface focus:outline-none focus:border-primary"
-            >
-              {allAgents.map((agent) => (
-                <option key={agent.tokenId} value={agent.tokenId}>
-                  {agent.name ?? `Agent #${agent.tokenId}`} #{agent.tokenId}
-                </option>
-              ))}
-            </select>
             <button
               type="button"
               onClick={refreshFunds}
