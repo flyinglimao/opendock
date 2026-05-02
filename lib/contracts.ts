@@ -235,4 +235,22 @@ export const MARKETPLACE_ABI = [
       { name: "duration", type: "uint256", indexed: false },
     ],
   },
+  // expireRent(uint256 rentalId) — callable by anyone once rental has expired
+  {
+    name: "expireRent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "rentalId", type: "uint256" }],
+    outputs: [],
+  },
+  // RentalExpired event
+  {
+    name: "RentalExpired",
+    type: "event",
+    inputs: [
+      { name: "rentalId", type: "uint256", indexed: true },
+      { name: "renter", type: "address", indexed: true },
+      { name: "tokenId", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
