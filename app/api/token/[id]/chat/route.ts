@@ -34,6 +34,7 @@ interface ChatMessage {
 
 interface ChatBody {
   providerAddress: string;
+  conversationId?: string | null;
   walletMode?: "hosted" | "user";
   servingHeaders?: {
     Authorization?: string;
@@ -51,6 +52,12 @@ function buildSystemPrompt(
   if (!kb) return base;
   const label = knowledgeBaseName ? `Knowledge base (${knowledgeBaseName})` : "Knowledge base";
   return `${base}\n\n${label}:\n${kb}`;
+}
+
+function buildConversationTitle(message: string): string {
+  const title = message.replace(/\s+/g, " ").trim();
+  if (!title) return "New conversation";
+  return title.length > 64 ? `${title.slice(0, 61)}...` : title;
 }
 
 async function getServiceMetadata(providerAddress: string) {
@@ -110,6 +117,33 @@ export async function POST(
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return NextResponse.json({ error: "messages required" }, { status: 400 });
+  }
+  const latestUserMessage = body.messages[body.messages.length - 1];
+  if (
+    latestUserMessage?.role !== "user" ||
+    typeof latestUserMessage.content !== "string" ||
+    !latestUserMessage.content.trim()
+  ) {
+    return NextResponse.json(
+      { error: "latest message must be a non-empty user message" },
+      { status: 400 }
+    );
+  }
+  const existingConversation = body.conversationId
+    ? await prisma.agentConversation.findFirst({
+        where: {
+          id: body.conversationId,
+          tokenId: id,
+          userAddress: address.toLowerCase(),
+        },
+        select: { id: true },
+      })
+    : null;
+  if (body.conversationId && !existingConversation) {
+    return NextResponse.json(
+      { error: "Conversation not found" },
+      { status: 404 }
+    );
   }
 
   const token = await prisma.agentToken.findUnique({
@@ -207,10 +241,78 @@ export async function POST(
       );
     }
 
+    const assistantMessage = data.choices?.[0]?.message?.content ?? "";
+    const now = new Date();
+    const conversation = await prisma.$transaction(async (tx) => {
+      const activeConversation =
+        existingConversation ??
+        (await tx.agentConversation.create({
+          data: {
+            tokenId: id,
+            userAddress: address.toLowerCase(),
+            providerAddress: body.providerAddress,
+            title: buildConversationTitle(latestUserMessage.content),
+            lastMessageAt: now,
+          },
+          select: { id: true },
+        }));
+
+      const messageCount = await tx.agentConversationMessage.count({
+        where: { conversationId: activeConversation.id },
+      });
+
+      await tx.agentConversationMessage.createMany({
+        data: [
+          {
+            conversationId: activeConversation.id,
+            sequence: messageCount + 1,
+            role: "user",
+            content: latestUserMessage.content,
+            createdAt: now,
+          },
+          {
+            conversationId: activeConversation.id,
+            sequence: messageCount + 2,
+            role: "assistant",
+            content: assistantMessage,
+            createdAt: now,
+          },
+        ],
+      });
+
+      return tx.agentConversation.update({
+        where: { id: activeConversation.id },
+        data: {
+          providerAddress: body.providerAddress,
+          lastMessageAt: now,
+        },
+        select: {
+          id: true,
+          title: true,
+          providerAddress: true,
+          createdAt: true,
+          updatedAt: true,
+          lastMessageAt: true,
+          _count: { select: { messages: true } },
+        },
+      });
+    });
+
     return NextResponse.json({
-      content: data.choices?.[0]?.message?.content ?? "",
+      content: assistantMessage,
       chatID: walletMode === "hosted" ? null : chatID,
       usage: data.usage ?? null,
+      conversation: {
+        id: conversation.id,
+        title: conversation.title,
+        providerAddress: conversation.providerAddress,
+        createdAt: conversation.createdAt.toISOString(),
+        updatedAt: conversation.updatedAt.toISOString(),
+        lastMessageAt: conversation.lastMessageAt.toISOString(),
+        messageCount: conversation._count.messages,
+        preview: assistantMessage,
+        previewRole: "assistant",
+      },
     });
   } catch (err) {
     return NextResponse.json(

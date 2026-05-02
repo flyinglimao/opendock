@@ -42,9 +42,47 @@ model AgentToken {
   updatedAt    DateTime @updatedAt
 
   computeWallets AgentComputeWallet[]
+  conversations AgentConversation[]
 
   @@index([owner])
   @@index([metadataReady])
+}
+
+enum AgentConversationRole {
+  user
+  assistant
+}
+
+model AgentConversation {
+  id              String   @id @default(cuid())
+  tokenId         String
+  userAddress     String
+  title           String?
+  providerAddress String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastMessageAt   DateTime @default(now())
+
+  agentToken AgentToken @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
+  messages   AgentConversationMessage[]
+
+  @@index([tokenId, userAddress, lastMessageAt])
+  @@index([userAddress])
+}
+
+model AgentConversationMessage {
+  id             String                @id @default(cuid())
+  conversationId String
+  sequence       Int
+  role           AgentConversationRole
+  content        String                @db.Text
+  createdAt      DateTime              @default(now())
+
+  conversation AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, sequence])
+  @@index([conversationId, createdAt])
 }
 
 // Per-user hosted compute wallet for an agent.

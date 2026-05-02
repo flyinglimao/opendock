@@ -28,6 +28,31 @@ interface Message {
   content: string;
 }
 
+interface ConversationSummary {
+  id: string;
+  title: string | null;
+  providerAddress: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string;
+  messageCount: number;
+  preview: string;
+  previewRole: "user" | "assistant" | null;
+}
+
+interface ConversationDetail {
+  id: string;
+  title: string | null;
+  providerAddress: string | null;
+  messages: Array<{
+    id: string;
+    sequence: number;
+    role: "user" | "assistant";
+    content: string;
+    createdAt: string;
+  }>;
+}
+
 interface Props {
   tokenId: string;
   agentName: string;
@@ -63,6 +88,28 @@ interface HostedComputeWalletState {
     availableBalanceWei: string;
   };
   providerBalanceWei: string;
+}
+
+function formatConversationTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function upsertConversation(
+  conversations: ConversationSummary[],
+  next: ConversationSummary
+): ConversationSummary[] {
+  const rest = conversations.filter((conversation) => conversation.id !== next.id);
+  return [next, ...rest].sort(
+    (a, b) =>
+      new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+  );
 }
 
 const AGENT_COMPUTE_WALLET_DELEGATE_ABI = [
@@ -349,20 +396,22 @@ function OwnerRentalPanel({
   // Step 2: once setUsageOperator is confirmed, send listRent
   useEffect(() => {
     if (!operatorReceipt) return;
-    setPendingOperatorTx(undefined);
-    const pricePerSecond = BigInt(Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600));
-    const maxDuration = parseInt(maxHours) * 3600;
-    writeContractAsync({
-      address: MARKETPLACE_ADDRESS,
-      abi: MARKETPLACE_ABI,
-      functionName: "listRent",
-      args: [INFT_ADDRESS, BigInt(tokenId), pricePerSecond, BigInt(maxDuration)],
-    })
-      .then((listTxHash) => setPendingTx(listTxHash))
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      });
+    queueMicrotask(() => {
+      setPendingOperatorTx(undefined);
+      const pricePerSecond = BigInt(Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600));
+      const maxDuration = parseInt(maxHours) * 3600;
+      writeContractAsync({
+        address: MARKETPLACE_ADDRESS,
+        abi: MARKETPLACE_ABI,
+        functionName: "listRent",
+        args: [INFT_ADDRESS, BigInt(tokenId), pricePerSecond, BigInt(maxDuration)],
+      })
+        .then((listTxHash) => setPendingTx(listTxHash))
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        });
+    });
   }, [operatorReceipt, priceOgPerHour, maxHours, tokenId, writeContractAsync]);
 
   const handleEnableRental = useCallback(async () => {
@@ -714,6 +763,13 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversationTitle, setActiveConversationTitle] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<ComputeProvider>(
     COMPUTE_PROVIDERS[0]
   );
@@ -736,6 +792,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
   const [accessLoading, setAccessLoading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const historyPrefetchedRef = useRef(false);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const getSigner = useCallback(async () => {
@@ -778,6 +835,119 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
       void refreshAccess();
     });
   }, [isConnected, address, refreshAccess]);
+
+  useEffect(() => {
+    historyPrefetchedRef.current = false;
+    queueMicrotask(() => {
+      setConversations([]);
+      setActiveConversationId(null);
+      setActiveConversationTitle(null);
+      setHistoryError(null);
+      setMessages([]);
+    });
+  }, [address, tokenId]);
+
+  const historyReady =
+    Boolean(address) &&
+    isAuthorized &&
+    !accessLoading &&
+    hasLedger !== null &&
+    providerBalance !== null;
+
+  const refreshConversations = useCallback(async (
+    options: { reportErrors?: boolean } = {}
+  ) => {
+    if (!address || !isAuthorized) return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const bearer = await buildBearer();
+      const res = await fetch(`/api/token/${tokenId}/conversations`, {
+        headers: { Authorization: bearer },
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { conversations?: ConversationSummary[]; error?: string }
+        | null;
+      if (!res.ok || !data) {
+        throw new Error(data?.error ?? "Failed to load conversation history");
+      }
+      setConversations(data.conversations ?? []);
+    } catch (err) {
+      if (options.reportErrors) {
+        setHistoryError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [address, buildBearer, isAuthorized, tokenId]);
+
+  useEffect(() => {
+    if (!isConnected || !address) {
+      queueMicrotask(() => {
+        setConversations([]);
+        setActiveConversationId(null);
+        setActiveConversationTitle(null);
+        setHistoryOpen(false);
+        setHistoryError(null);
+        setMessages([]);
+        historyPrefetchedRef.current = false;
+      });
+      return;
+    }
+    if (!historyReady || historyPrefetchedRef.current) return;
+    historyPrefetchedRef.current = true;
+    queueMicrotask(() => {
+      void refreshConversations({ reportErrors: false });
+    });
+  }, [address, historyReady, isConnected, refreshConversations]);
+
+  const handleSelectConversation = useCallback(async (conversationId: string) => {
+    if (conversationLoading) return;
+    setConversationLoading(true);
+    setError(null);
+    try {
+      const bearer = await buildBearer();
+      const res = await fetch(
+        `/api/token/${tokenId}/conversations/${conversationId}`,
+        { headers: { Authorization: bearer } }
+      );
+      const data = (await res.json().catch(() => null)) as
+        | { conversation?: ConversationDetail; error?: string }
+        | null;
+      if (!res.ok || !data?.conversation) {
+        throw new Error(data?.error ?? "Failed to load conversation");
+      }
+      setMessages(
+        data.conversation.messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        }))
+      );
+      setActiveConversationId(data.conversation.id);
+      setActiveConversationTitle(data.conversation.title);
+      if (data.conversation.providerAddress) {
+        const provider = COMPUTE_PROVIDERS.find(
+          (item) =>
+            item.address.toLowerCase() ===
+            data.conversation!.providerAddress!.toLowerCase()
+        );
+        if (provider) setSelectedProvider(provider);
+      }
+      setHistoryOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConversationLoading(false);
+    }
+  }, [buildBearer, conversationLoading, tokenId]);
+
+  const handleStartNewConversation = useCallback(() => {
+    setMessages([]);
+    setActiveConversationId(null);
+    setActiveConversationTitle(null);
+    setHistoryOpen(false);
+    setError(null);
+  }, []);
 
   // Ledger
   const refreshLedger = useCallback(async () => {
@@ -987,6 +1157,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
           Authorization: bearer,
         },
         body: JSON.stringify({
+          conversationId: activeConversationId,
           walletMode: computeWalletMode,
           providerAddress: selectedProvider.address,
           servingHeaders,
@@ -998,6 +1169,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
         content?: string;
         chatID?: string | null;
         usage?: unknown;
+        conversation?: ConversationSummary;
         error?: string;
       } | null;
       if (!response.ok) {
@@ -1013,6 +1185,11 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
       }
 
       setMessages([...newMessages, { role: "assistant", content }]);
+      if (data?.conversation) {
+        setActiveConversationId(data.conversation.id);
+        setActiveConversationTitle(data.conversation.title);
+        setConversations((current) => upsertConversation(current, data.conversation!));
+      }
       await refreshLedger();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1021,7 +1198,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [address, input, sending, messages, buildBearer, tokenId, getBroker, selectedProvider, computeWalletMode, refreshLedger]);
+  }, [activeConversationId, address, input, sending, messages, buildBearer, tokenId, getBroker, selectedProvider, computeWalletMode, refreshLedger]);
 
   // ---- Not connected ----
   if (!isConnected) {
@@ -1095,18 +1272,44 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
       {/* Chat console */}
       <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/30 shadow-[0px_4px_20px_rgba(0,0,0,0.05)] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-lg py-md border-b border-outline-variant/30">
-          <div className="flex items-center gap-sm">
+        <div className="flex items-center justify-between gap-md px-lg py-md border-b border-outline-variant/30 flex-wrap">
+          <div className="flex items-center gap-sm min-w-0">
             <div className="w-2 h-2 rounded-full bg-green-400" />
-            <span className="font-label-caps text-label-caps font-semibold text-on-surface">
-              Interact via 0G Compute
-            </span>
+            <div className="flex flex-col min-w-0">
+              <span className="font-label-caps text-label-caps font-semibold text-on-surface">
+                Interact via 0G Compute
+              </span>
+              {activeConversationTitle && (
+                <span className="text-xs text-outline truncate max-w-[220px]">
+                  {activeConversationTitle}
+                </span>
+              )}
+            </div>
             {isOwner
               ? <span className="text-xs font-label-caps text-primary bg-primary/10 rounded-full px-sm py-xs">Owner</span>
               : <span className="text-xs font-label-caps text-green-700 bg-green-50 rounded-full px-sm py-xs">Authorized</span>
             }
           </div>
-          <div className="flex items-center gap-sm">
+          <div className="flex items-center gap-sm flex-wrap justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                const nextOpen = !historyOpen;
+                setHistoryOpen(nextOpen);
+                if (nextOpen && historyReady) {
+                  void refreshConversations({ reportErrors: true });
+                }
+              }}
+              title="Conversation history"
+              aria-label="Conversation history"
+              className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-colors ${
+                historyOpen
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-outline-variant bg-surface-container text-on-surface-variant hover:border-primary"
+              }`}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>history</span>
+            </button>
             {balanceData && (
               <span className="font-data-mono text-data-mono text-on-surface-variant text-xs">
                 {(Number(balanceData.value) / 1e18).toFixed(4)} {balanceData.symbol}
@@ -1123,6 +1326,89 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
             </select>
           </div>
         </div>
+
+        {historyOpen && (
+          <div className="border-b border-outline-variant/30 bg-surface-container-lowest px-lg py-md">
+            <div className="flex items-center justify-between gap-sm mb-sm">
+              <span className="font-label-caps text-label-caps font-semibold text-on-surface">
+                Conversation history
+              </span>
+              <button
+                type="button"
+                onClick={handleStartNewConversation}
+                title="Start new conversation"
+                aria-label="Start new conversation"
+                className="w-8 h-8 rounded-lg border border-outline-variant bg-surface-container text-on-surface-variant hover:border-primary hover:text-primary flex items-center justify-center transition-colors"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add_comment</span>
+              </button>
+            </div>
+            {!historyReady ? (
+              <div className="flex items-center gap-sm text-outline py-sm">
+                <span className="inline-block w-4 h-4 border-2 border-outline/30 border-t-outline rounded-full animate-spin" />
+                <span className="font-body-sub text-body-sub">Preparing history...</span>
+              </div>
+            ) : historyLoading ? (
+              <div className="flex items-center gap-sm text-outline py-sm">
+                <span className="inline-block w-4 h-4 border-2 border-outline/30 border-t-outline rounded-full animate-spin" />
+                <span className="font-body-sub text-body-sub">Loading history...</span>
+              </div>
+            ) : historyError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-md py-sm">
+                <p className="font-body-sub text-body-sub text-red-700 break-all">
+                  {historyError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void refreshConversations({ reportErrors: true })}
+                  className="text-xs text-red-500 underline underline-offset-2 mt-xs"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : conversations.length === 0 ? (
+              <div className="text-sm text-outline py-sm">
+                No saved conversations yet.
+              </div>
+            ) : (
+              <div className="grid gap-xs max-h-64 overflow-y-auto pr-xs">
+                {conversations.map((conversation) => {
+                  const selected = conversation.id === activeConversationId;
+                  return (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      onClick={() => void handleSelectConversation(conversation.id)}
+                      disabled={conversationLoading}
+                      className={`text-left rounded-lg border px-sm py-sm transition-colors ${
+                        selected
+                          ? "border-primary bg-primary/10"
+                          : "border-outline-variant/50 bg-surface-container hover:border-primary"
+                      } disabled:opacity-60`}
+                    >
+                      <div className="flex items-center justify-between gap-sm">
+                        <span className="text-sm font-semibold text-on-surface truncate">
+                          {conversation.title || "New conversation"}
+                        </span>
+                        <span className="text-[11px] text-outline shrink-0">
+                          {formatConversationTime(conversation.lastMessageAt)}
+                        </span>
+                      </div>
+                      <div className="mt-xs flex items-center justify-between gap-sm">
+                        <span className="text-xs text-on-surface-variant truncate">
+                          {conversation.preview || "No messages yet"}
+                        </span>
+                        <span className="font-data-mono text-[10px] text-outline shrink-0">
+                          {conversation.messageCount}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Compute wallet mode */}
         <div className="px-lg pt-md">
@@ -1183,7 +1469,13 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-lg py-md flex flex-col gap-md min-h-[300px] max-h-[480px]">
-          {messages.length === 0 && (
+          {conversationLoading && (
+            <div className="flex items-center justify-center gap-sm text-outline py-md">
+              <span className="inline-block w-4 h-4 border-2 border-outline/30 border-t-outline rounded-full animate-spin" />
+              <span className="font-body-sub text-body-sub">Loading conversation...</span>
+            </div>
+          )}
+          {!conversationLoading && messages.length === 0 && (
             <div className="flex-1 flex flex-col items-center justify-center gap-sm text-outline">
               <span className="material-symbols-outlined" style={{ fontSize: 40 }}>smart_toy</span>
               <p className="font-body-sub text-body-sub text-center">
