@@ -6,10 +6,17 @@
 // This keeps the system prompt out of browser responses.
 
 import { NextRequest, NextResponse } from "next/server";
-import { createZGComputeNetworkReadOnlyBroker } from "@0glabs/0g-serving-broker";
+import {
+  createZGComputeNetworkBroker,
+  createZGComputeNetworkReadOnlyBroker,
+} from "@0glabs/0g-serving-broker";
 import { prisma } from "@/lib/db";
 import { verifyAuthHeader, checkOnChainAuth } from "@/lib/auth";
 import { downloadZGJson } from "@/lib/0g-download";
+import {
+  getAgentComputeWalletSigner,
+  hasAgentComputeRootSecret,
+} from "@/lib/agent-compute-wallet";
 import {
   decryptAgentIntelligence,
   type EncryptedAgentPayload,
@@ -27,9 +34,10 @@ interface ChatMessage {
 
 interface ChatBody {
   providerAddress: string;
-  servingHeaders: {
+  walletMode?: "hosted" | "user";
+  servingHeaders?: {
     Authorization?: string;
-  };
+  } | null;
   messages: ChatMessage[];
 }
 
@@ -75,10 +83,29 @@ export async function POST(
   }
 
   const body = (await req.json()) as ChatBody;
-  if (!body.providerAddress || !body.servingHeaders?.Authorization) {
+  const walletMode = body.walletMode ?? "user";
+  if (walletMode !== "hosted" && walletMode !== "user") {
     return NextResponse.json(
-      { error: "providerAddress and serving Authorization header required" },
+      { error: "walletMode must be hosted or user" },
       { status: 400 }
+    );
+  }
+  if (!body.providerAddress) {
+    return NextResponse.json(
+      { error: "providerAddress required" },
+      { status: 400 }
+    );
+  }
+  if (walletMode === "user" && !body.servingHeaders?.Authorization) {
+    return NextResponse.json(
+      { error: "serving Authorization header required for user wallet mode" },
+      { status: 400 }
+    );
+  }
+  if (walletMode === "hosted" && !hasAgentComputeRootSecret()) {
+    return NextResponse.json(
+      { error: "Hosted compute wallet root is not configured" },
+      { status: 503 }
     );
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -121,11 +148,25 @@ export async function POST(
 
   try {
     const { endpoint, model } = await getServiceMetadata(body.providerAddress);
+    let authorization = body.servingHeaders?.Authorization ?? "";
+    let hostedBroker:
+      | Awaited<ReturnType<typeof createZGComputeNetworkBroker>>
+      | null = null;
+
+    if (walletMode === "hosted") {
+      const { signer } = await getAgentComputeWalletSigner(id, address);
+      hostedBroker = await createZGComputeNetworkBroker(signer);
+      const hostedHeaders = await hostedBroker.inference.getRequestHeaders(
+        body.providerAddress
+      );
+      authorization = hostedHeaders.Authorization;
+    }
+
     const response = await fetch(`${endpoint}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: body.servingHeaders.Authorization,
+        Authorization: authorization,
       },
       body: JSON.stringify({
         model,
@@ -151,18 +192,27 @@ export async function POST(
       );
     }
 
+    const chatID =
+      response.headers.get("ZG-Res-Key") ??
+      response.headers.get("zg-res-key") ??
+      data.id ??
+      data.chatID ??
+      null;
+
+    if (walletMode === "hosted" && hostedBroker && chatID) {
+      await hostedBroker.inference.processResponse(
+        body.providerAddress,
+        chatID,
+        data.usage ? JSON.stringify(data.usage) : undefined
+      );
+    }
+
     return NextResponse.json({
       content: data.choices?.[0]?.message?.content ?? "",
-      chatID:
-        response.headers.get("ZG-Res-Key") ??
-        response.headers.get("zg-res-key") ??
-        data.id ??
-        data.chatID ??
-        null,
+      chatID: walletMode === "hosted" ? null : chatID,
       usage: data.usage ?? null,
     });
   } catch (err) {
-    console.log(err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 500 }

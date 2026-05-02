@@ -41,6 +41,27 @@ model AgentToken {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  computeWallets AgentComputeWallet[]
+
   @@index([owner])
   @@index([metadataReady])
+}
+
+// Per-user hosted compute wallet for an agent.
+// Stores only derivation metadata; the private key is derived at runtime from
+// the server root secret and never persisted in the database.
+model AgentComputeWallet {
+  id          Int      @id @default(autoincrement())
+  tokenId     String
+  userAddress String
+  hdPath      String   @unique
+  address     String   @unique
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agentToken AgentToken @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
+
+  @@unique([tokenId, userAddress])
+  @@index([userAddress])
 }

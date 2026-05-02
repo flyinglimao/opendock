@@ -8,7 +8,7 @@ import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 
 const publicClient = createPublicClient({ chain: zgTestnet, transport: http() });
 
-const AUTH_WINDOW_MS = 5 * 60 * 1000; // 5-minute signature window
+const AUTH_WINDOW_MS = 30 * 60 * 1000; // 30-minute signature window
 
 export interface AuthPayload {
   address: string;
