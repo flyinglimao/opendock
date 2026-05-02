@@ -12,6 +12,11 @@ import { COMPUTE_PROVIDERS } from "@/lib/compute-providers";
 type FundsTab = "ledger" | "providers";
 type AuthSessionStatus = "checking" | "ready" | "needed" | "signing";
 
+interface UserSettings {
+  hasBraveApiKey: boolean;
+  braveApiKey: string | null;
+}
+
 interface DashboardAgent {
   tokenId: string;
   name: string | null;
@@ -300,6 +305,11 @@ export default function DashboardTabs() {
   const [error, setError] = useState<string | null>(null);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const firstLoadRef = useRef(false);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [braveKeyInput, setBraveKeyInput] = useState("");
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const accountReady = hydrated && Boolean(address);
   const walletChecking =
     !hydrated ||
@@ -446,6 +456,81 @@ export default function DashboardTabs() {
     await Promise.all([refreshWalletLedger(), refreshCloudLedger()]);
   }, [refreshCloudLedger, refreshWalletLedger]);
 
+  const refreshSettings = useCallback(async () => {
+    if (!address) return;
+    const session = await getAuthSession();
+    if (!session) return;
+    try {
+      const res = await fetch("/api/settings", {
+        headers: { Authorization: session.bearer },
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as UserSettings;
+      setUserSettings(data);
+      setBraveKeyInput("");
+    } catch {
+      // ignore
+    }
+  }, [address, getAuthSession]);
+
+  const saveSettings = useCallback(async () => {
+    if (!address) return;
+    setSettingsLoading(true);
+    setSettingsError(null);
+    setSettingsSaved(false);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session.bearer,
+        },
+        body: JSON.stringify({ braveApiKey: braveKeyInput || null }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Failed to save settings");
+      }
+      await refreshSettings();
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 3000);
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [address, braveKeyInput, getAuthSession, refreshSettings]);
+
+  const clearBraveKey = useCallback(async () => {
+    if (!address) return;
+    setSettingsLoading(true);
+    setSettingsError(null);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session.bearer,
+        },
+        body: JSON.stringify({ braveApiKey: null }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Failed to clear key");
+      }
+      await refreshSettings();
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [address, getAuthSession, refreshSettings]);
+
   useEffect(() => {
     if (!accountReady || !address || firstLoadRef.current) return;
     firstLoadRef.current = true;
@@ -453,6 +538,12 @@ export default function DashboardTabs() {
       void refreshAgents();
     });
   }, [accountReady, address, refreshAgents]);
+
+  // Load settings once authenticated
+  useEffect(() => {
+    if (!accountReady || !address || authStatus !== "ready") return;
+    void refreshSettings();
+  }, [accountReady, address, authStatus, refreshSettings]);
 
   useEffect(() => {
     if (!accountReady || !address) {
@@ -906,6 +997,111 @@ export default function DashboardTabs() {
             />
           </div>
         )}
+      </section>
+
+      {/* Settings Section */}
+      <section className="flex flex-col gap-md">
+        <div>
+          <h2 className="font-h2 text-h2 font-semibold text-on-surface">Settings</h2>
+          <p className="text-sm text-on-surface-variant">
+            Configure optional integrations for your agents.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest overflow-hidden">
+          <div className="px-md py-sm border-b border-outline-variant/30 flex items-center justify-between">
+            <div className="flex items-center gap-sm">
+              <span className="material-symbols-outlined text-on-surface" style={{ fontSize: 18 }}>travel_explore</span>
+              <h3 className="font-semibold text-on-surface">Web Search (Brave API)</h3>
+            </div>
+            {userSettings?.hasBraveApiKey ? (
+              <span className="inline-flex items-center gap-xs rounded-full bg-green-50 border border-green-200 px-sm py-0.5 text-[11px] font-semibold text-green-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                Configured
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-xs rounded-full bg-surface-container-high border border-outline-variant px-sm py-0.5 text-[11px] font-semibold text-outline">
+                <span className="w-1.5 h-1.5 rounded-full bg-outline/40 inline-block" />
+                Not configured
+              </span>
+            )}
+          </div>
+
+          <div className="p-md flex flex-col gap-md">
+            <p className="text-sm text-on-surface-variant">
+              Agents can search the web in real-time when you provide a Brave Search API key.
+              Get a free key at{" "}
+              <a
+                href="https://brave.com/search/api/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline underline-offset-2 hover:text-primary/80"
+              >
+                brave.com/search/api
+              </a>
+              {" "}(free tier: 2,000 queries/month).
+            </p>
+
+            {userSettings?.hasBraveApiKey && (
+              <div className="flex items-center gap-sm rounded-md border border-outline-variant/40 bg-surface-container-low px-md py-sm">
+                <span className="material-symbols-outlined text-outline" style={{ fontSize: 16 }}>key</span>
+                <span className="font-data-mono text-sm text-on-surface-variant flex-1 truncate">
+                  {userSettings.braveApiKey ?? "•••••••••••••"}
+                </span>
+                <button
+                  type="button"
+                  onClick={clearBraveKey}
+                  disabled={settingsLoading}
+                  className="text-xs font-semibold text-error hover:underline disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-sm">
+              <input
+                type="password"
+                placeholder={userSettings?.hasBraveApiKey ? "Enter new key to replace" : "BSA..."}
+                value={braveKeyInput}
+                onChange={(e) => setBraveKeyInput(e.target.value)}
+                autoComplete="off"
+                className="flex-1 rounded-md border border-outline-variant bg-white px-md py-sm text-sm text-on-surface focus:outline-none focus:border-primary placeholder:text-outline/60"
+              />
+              <button
+                type="button"
+                onClick={saveSettings}
+                disabled={settingsLoading || !braveKeyInput.trim()}
+                className="rounded-full bg-primary text-on-primary px-lg py-sm text-sm font-semibold disabled:opacity-50 whitespace-nowrap"
+              >
+                {settingsLoading ? "Saving…" : "Save Key"}
+              </button>
+            </div>
+
+            {settingsSaved && (
+              <p className="text-xs font-semibold text-green-700">
+                ✓ Settings saved successfully.
+              </p>
+            )}
+            {settingsError && (
+              <p className="text-xs text-error">{settingsError}</p>
+            )}
+
+            {authStatus === "needed" && (
+              <p className="text-xs text-on-surface-variant">
+                You need to{" "}
+                <button
+                  type="button"
+                  onClick={signIn}
+                  className="text-primary font-semibold underline"
+                >
+                  sign in
+                </button>
+                {" "}to manage settings.
+              </p>
+            )}
+          </div>
+        </div>
       </section>
     </div>
   );

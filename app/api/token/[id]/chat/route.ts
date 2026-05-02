@@ -25,6 +25,7 @@ import {
   type EncryptedAgentPayload,
 } from "@/lib/encryption";
 import { KB_TOOLS, executeKBTool, getKBFiles, type KBFile } from "@/lib/kb-tools";
+import { WEB_SEARCH_TOOL, executeBraveSearch } from "@/lib/web-search";
 
 const ZG_RPC =
   process.env.NEXT_PUBLIC_ZG_EVM_RPC ??
@@ -67,13 +68,19 @@ function buildSystemPrompt(
   hasKB: boolean
 ): string {
   const base = systemPrompt?.trim() ?? "";
-  if (!hasKB) return base;
-  return (
-    base +
-    "\n\nYou have access to a knowledge base. Use the provided tools" +
-    " (kb_list_files, kb_search, kb_read_file) to find and read relevant" +
-    " information before answering questions that require specific knowledge."
-  );
+  let extra = "";
+  if (hasKB) {
+    extra +=
+      "\n\nYou have access to a knowledge base. Use the provided tools" +
+      " (kb_list_files, kb_search, kb_read_file) to find and read relevant" +
+      " information before answering questions that require specific knowledge.";
+  }
+  extra +=
+    "\n\nYou have access to a web_search tool. Use it to look up current" +
+    " information, recent events, or anything that may not be in your training data." +
+    " If the tool returns an error asking the user to configure an API key, relay" +
+    " that message to the user as-is.";
+  return base + extra;
 }
 
 function buildConversationTitle(message: string): string {
@@ -117,9 +124,15 @@ async function runAgentLoop(
   kbFiles: KBFile[],
   hostedBroker: Awaited<ReturnType<typeof createZGComputeNetworkBroker>> | null,
   providerAddress: string,
-  walletMode: "hosted" | "user"
+  walletMode: "hosted" | "user",
+  braveApiKey: string | null
 ): Promise<LoopResult> {
-  const tools = kbFiles.length > 0 ? KB_TOOLS : undefined;
+  // Always expose web_search; the executor handles the missing-key case gracefully.
+  const tools = [
+    ...(kbFiles.length > 0 ? [...KB_TOOLS] : []),
+    WEB_SEARCH_TOOL,
+  ];
+  const activeTools: typeof tools = tools;
   const internalMessages: LLMMessage[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
@@ -137,7 +150,7 @@ async function runAgentLoop(
         ...internalMessages,
       ],
     };
-    if (tools) reqBody.tools = tools;
+    if (activeTools) reqBody.tools = activeTools;
 
     const llmResponse = await fetch(`${endpoint}/chat/completions`, {
       method: "POST",
@@ -215,9 +228,24 @@ async function runAgentLoop(
       try {
         toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, string>;
       } catch {
-        // ignore parse errors; executeKBTool handles missing args gracefully
+        // ignore parse errors; handlers deal with missing args gracefully
       }
-      const result = executeKBTool(toolCall.function.name, toolArgs, kbFiles);
+
+      let result: string;
+      if (toolCall.function.name === "web_search") {
+        if (braveApiKey) {
+          result = await executeBraveSearch(toolArgs.query ?? "", braveApiKey);
+        } else {
+          result = JSON.stringify({
+            error:
+              "Web search is not configured. Please ask the user to add their" +
+              " Brave Search API key in the OpenDock Dashboard (Settings section)" +
+              " to enable this feature.",
+          });
+        }
+      } else {
+        result = executeKBTool(toolCall.function.name, toolArgs, kbFiles);
+      }
       internalMessages.push({
         role: "tool",
         tool_call_id: toolCall.id,
@@ -331,9 +359,22 @@ export async function POST(
 
   let systemPrompt: string;
   let kbFiles: KBFile[];
+  let braveApiKey: string | null = null;
   try {
     const payload = decryptAgentIntelligence(envelope);
     kbFiles = getKBFiles(payload);
+
+    // Fetch the user's Brave Search API key (if configured)
+    try {
+      const userSetting = await prisma.userSetting.findUnique({
+        where: { userAddress: address.toLowerCase() },
+        select: { braveApiKey: true },
+      });
+      braveApiKey = userSetting?.braveApiKey ?? null;
+    } catch {
+      // Non-fatal: proceed without web search
+    }
+
     systemPrompt = buildSystemPrompt(payload.systemPrompt, kbFiles.length > 0);
   } catch {
     return NextResponse.json(
@@ -367,7 +408,8 @@ export async function POST(
       kbFiles,
       hostedBroker,
       body.providerAddress,
-      walletMode
+      walletMode,
+      braveApiKey
     );
 
     if (!result.ok) {

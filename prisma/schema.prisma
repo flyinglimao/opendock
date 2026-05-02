@@ -85,6 +85,16 @@ model AgentConversationMessage {
   @@index([conversationId, createdAt])
 }
 
+// Per-user settings (e.g. API keys for optional integrations).
+model UserSetting {
+  userAddress String @id  // checksummed/lowercased wallet address
+
+  braveApiKey String?     // Brave Search API key for web search tool
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 // Per-user hosted compute wallet for an agent.
 // Stores only derivation metadata; the private key is derived at runtime from
 // the server root secret and never persisted in the database.
