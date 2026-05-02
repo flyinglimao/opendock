@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useBalance, useConfig, useWalletClient } from "wagmi";
@@ -9,6 +17,7 @@ import { BrowserProvider, Contract, parseEther } from "ethers";
 import { buildSessionAuthMessage } from "@/lib/auth";
 import { COMPUTE_PROVIDERS } from "@/lib/compute-providers";
 
+type DashboardTab = "agents" | "automations" | "funds" | "settings";
 type FundsTab = "ledger" | "providers";
 type AuthSessionStatus = "checking" | "ready" | "needed" | "signing";
 
@@ -42,6 +51,26 @@ interface WalletLedgerState {
   hasLedger: boolean;
   availableBalanceWei: string;
   providerBalances: Record<string, string>;
+}
+
+interface DashboardAutomation {
+  id: string;
+  tokenId: string;
+  agentName: string;
+  agentImage: string | null;
+  cronExpression: string;
+  instruction: string;
+  enabled: boolean;
+  updatedAt: string;
+  history: DashboardAutomationHistory[];
+}
+
+interface DashboardAutomationHistory {
+  id: string;
+  status: "running" | "success" | "failed";
+  startedAt: string;
+  completedAt: string | null;
+  summary: string | null;
 }
 
 interface HostedComputeWalletState {
@@ -153,6 +182,27 @@ function formatOg(value: number | null | undefined, digits = 4): string {
 function shortAddress(address: string | null | undefined): string {
   if (!address) return "-";
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function agentDisplayName(agent: DashboardAgent): string {
+  return agent.name ?? `Agent #${agent.tokenId}`;
+}
+
+function formatDashboardTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function isCronExpression(expression: string): boolean {
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5) return false;
+  return fields.every((field) => /^[\d*,/-]+$/.test(field));
 }
 
 function getAuthSessionKey(address: string) {
@@ -284,6 +334,8 @@ export default function DashboardTabs() {
     rented: [],
   });
   const [agentsLoading, setAgentsLoading] = useState(false);
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("agents");
+  const [automations, setAutomations] = useState<DashboardAutomation[]>([]);
   const [fundsTab, setFundsTab] = useState<FundsTab>("providers");
   const [walletLedger, setWalletLedger] = useState<WalletLedgerState | null>(null);
   const [cloudState, setCloudState] = useState<HostedComputeWalletState | null>(null);
@@ -828,6 +880,13 @@ export default function DashboardTabs() {
   const cloudProviderBalances = Object.fromEntries(
     (cloudState?.providerBalances ?? []).map((item) => [item.address, item.balanceWei])
   );
+  const automationAgents = [...agents.owned, ...agents.rented];
+  const dashboardTabs: Array<{ id: DashboardTab; label: string; icon: string }> = [
+    { id: "agents", label: "My Agents", icon: "smart_toy" },
+    { id: "automations", label: "Automation", icon: "routine" },
+    { id: "funds", label: "Compute Funds", icon: "account_balance_wallet" },
+    { id: "settings", label: "Settings", icon: "settings" },
+  ];
 
   return (
     <div className="flex flex-col gap-xl">
@@ -911,6 +970,27 @@ export default function DashboardTabs() {
         </div>
       )}
 
+      <nav className="flex items-center gap-sm overflow-x-auto border-b border-outline-variant">
+        {dashboardTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setDashboardTab(tab.id)}
+            className={`flex items-center gap-xs px-sm pb-sm text-sm font-semibold border-b-2 whitespace-nowrap transition-colors ${
+              dashboardTab === tab.id
+                ? "border-primary text-primary"
+                : "border-transparent text-on-surface-variant hover:text-on-surface"
+            }`}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              {tab.icon}
+            </span>
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {dashboardTab === "agents" && (
       <section className="flex flex-col gap-md">
         <div className="flex items-center justify-between gap-md">
           <div>
@@ -974,7 +1054,19 @@ export default function DashboardTabs() {
           </div>
         </div>
       </section>
+      )}
 
+      {dashboardTab === "automations" && (
+        <AutomationTab
+          agents={automationAgents}
+          agentsLoading={agentsLoading}
+          automations={automations}
+          setAutomations={setAutomations}
+          onRefreshAgents={refreshAgents}
+        />
+      )}
+
+      {dashboardTab === "funds" && (
       <section className="flex flex-col gap-md">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-md">
           <div>
@@ -1068,8 +1160,10 @@ export default function DashboardTabs() {
           </div>
         )}
       </section>
+      )}
 
       {/* Settings Section */}
+      {dashboardTab === "settings" && (
       <section className="flex flex-col gap-md">
         <div>
           <h2 className="font-h2 text-h2 font-semibold text-on-surface">Settings</h2>
@@ -1338,6 +1432,445 @@ export default function DashboardTabs() {
           </div>
         </div>
       </section>
+      )}
+    </div>
+  );
+}
+
+function AutomationTab({
+  agents,
+  agentsLoading,
+  automations,
+  setAutomations,
+  onRefreshAgents,
+}: {
+  agents: DashboardAgent[];
+  agentsLoading: boolean;
+  automations: DashboardAutomation[];
+  setAutomations: Dispatch<SetStateAction<DashboardAutomation[]>>;
+  onRefreshAgents: () => void;
+}) {
+  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
+  const [draftAgent, setDraftAgent] = useState<DashboardAgent | null>(null);
+  const [cronInput, setCronInput] = useState("");
+  const [instructionInput, setInstructionInput] = useState("");
+  const [enabledInput, setEnabledInput] = useState(true);
+  const [savedNotice, setSavedNotice] = useState(false);
+
+  const selectedAutomation =
+    automations.find((automation) => automation.id === selectedAutomationId) ?? null;
+  const activeAgent =
+    selectedAutomation
+      ? agents.find((agent) => agent.tokenId === selectedAutomation.tokenId) ?? null
+      : draftAgent;
+  const activeAgentName = selectedAutomation?.agentName ?? (activeAgent ? agentDisplayName(activeAgent) : "");
+  const activeAgentImage = selectedAutomation?.agentImage ?? activeAgent?.image ?? null;
+  const hasSelection = Boolean(selectedAutomation || draftAgent);
+  const cronIsValid = isCronExpression(cronInput);
+  const isDirty = selectedAutomation
+    ? cronInput !== selectedAutomation.cronExpression ||
+      instructionInput !== selectedAutomation.instruction ||
+      enabledInput !== selectedAutomation.enabled
+    : Boolean(draftAgent && (cronInput.trim() || instructionInput.trim() || !enabledInput));
+  const canSave = isDirty && cronIsValid && Boolean(instructionInput.trim());
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setSavedNotice(false);
+      if (selectedAutomation) {
+        setCronInput(selectedAutomation.cronExpression);
+        setInstructionInput(selectedAutomation.instruction);
+        setEnabledInput(selectedAutomation.enabled);
+        return;
+      }
+      if (draftAgent) {
+        setCronInput("");
+        setInstructionInput("");
+        setEnabledInput(true);
+        return;
+      }
+      setCronInput("");
+      setInstructionInput("");
+      setEnabledInput(true);
+    });
+  }, [draftAgent, selectedAutomation]);
+
+  const selectAutomation = (automation: DashboardAutomation) => {
+    setSelectedAutomationId(automation.id);
+    setDraftAgent(null);
+  };
+
+  const selectAgentForAutomation = (agent: DashboardAgent) => {
+    setSelectedAutomationId(null);
+    setDraftAgent(agent);
+  };
+
+  const saveAutomation = () => {
+    if (!hasSelection || !canSave) return;
+    const now = new Date().toISOString();
+    if (selectedAutomation) {
+      setAutomations((current) =>
+        current.map((automation) =>
+          automation.id === selectedAutomation.id
+            ? {
+                ...automation,
+                cronExpression: cronInput.trim(),
+                instruction: instructionInput.trim(),
+                enabled: enabledInput,
+                updatedAt: now,
+              }
+            : automation
+        )
+      );
+      setSavedNotice(true);
+      return;
+    }
+    if (!draftAgent) return;
+    const automation: DashboardAutomation = {
+      id: `local-${Date.now()}`,
+      tokenId: draftAgent.tokenId,
+      agentName: agentDisplayName(draftAgent),
+      agentImage: draftAgent.image,
+      cronExpression: cronInput.trim(),
+      instruction: instructionInput.trim(),
+      enabled: enabledInput,
+      updatedAt: now,
+      history: [],
+    };
+    setAutomations((current) => [automation, ...current]);
+    setSelectedAutomationId(automation.id);
+    setDraftAgent(null);
+    setSavedNotice(true);
+  };
+
+  const resetForm = () => {
+    if (selectedAutomation) {
+      setCronInput(selectedAutomation.cronExpression);
+      setInstructionInput(selectedAutomation.instruction);
+      setEnabledInput(selectedAutomation.enabled);
+      return;
+    }
+    setCronInput("");
+    setInstructionInput("");
+    setEnabledInput(true);
+  };
+
+  return (
+    <section className="flex flex-col gap-md">
+      <div className="flex items-end justify-between gap-md flex-wrap">
+        <div>
+          <h2 className="font-h2 text-h2 font-semibold text-on-surface">Automation</h2>
+          <p className="text-sm text-on-surface-variant">
+            Review agent automations and prepare new cron instructions.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefreshAgents}
+          disabled={agentsLoading}
+          title="Refresh agents"
+          aria-label="Refresh agents"
+          className="w-10 h-10 rounded-lg border border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:border-primary hover:text-primary disabled:opacity-50 flex items-center justify-center transition-colors"
+        >
+          <span className={`material-symbols-outlined ${agentsLoading ? "animate-spin" : ""}`} style={{ fontSize: 20 }}>
+            refresh
+          </span>
+        </button>
+      </div>
+
+      <div className="grid lg:grid-cols-[380px_minmax(0,1fr)] gap-lg items-start">
+        <aside className="bg-surface-container-lowest border border-outline-variant/40 rounded-xl overflow-hidden">
+          <div className="px-lg py-md border-b border-outline-variant/30 flex items-center justify-between">
+            <span className="font-label-caps text-label-caps font-semibold text-on-surface">
+              Automations
+            </span>
+            <span className="font-data-mono text-data-mono text-outline">
+              {automations.length}
+            </span>
+          </div>
+          <div className="max-h-[720px] overflow-y-auto">
+            {automations.length === 0 ? (
+              <div className="p-lg text-sm text-outline">
+                No automations yet.
+              </div>
+            ) : (
+              <div className="p-sm flex flex-col gap-xs">
+                {automations.map((automation) => {
+                  const selected = automation.id === selectedAutomationId;
+                  return (
+                    <button
+                      key={automation.id}
+                      type="button"
+                      onClick={() => selectAutomation(automation)}
+                      className={`text-left rounded-lg border p-sm flex gap-sm transition-colors ${
+                        selected
+                          ? "border-primary bg-primary/10"
+                          : "border-transparent hover:border-outline-variant hover:bg-surface-container"
+                      }`}
+                    >
+                      <AutomationAvatar name={automation.agentName} image={automation.agentImage} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-sm">
+                          <span className="text-sm font-semibold text-on-surface truncate">
+                            {automation.agentName}
+                          </span>
+                          <span
+                            className={`text-[11px] shrink-0 ${
+                              automation.enabled ? "text-green-700" : "text-outline"
+                            }`}
+                          >
+                            {automation.enabled ? "Active" : "Paused"}
+                          </span>
+                        </div>
+                        <div className="text-xs text-on-surface-variant truncate mt-0.5">
+                          {automation.cronExpression}
+                        </div>
+                        <div className="text-xs text-outline truncate mt-xs">
+                          {automation.instruction}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="border-t border-outline-variant/30">
+              <div className="px-lg py-md flex items-center justify-between">
+                <span className="font-label-caps text-label-caps font-semibold text-on-surface">
+                  New From Agent
+                </span>
+                <span className="font-data-mono text-data-mono text-outline">
+                  {agents.length}
+                </span>
+              </div>
+              <div className="p-sm pt-0 flex flex-col gap-xs">
+                {agentsLoading && agents.length === 0 ? (
+                  [0, 1, 2].map((item) => (
+                    <div key={item} className="h-16 rounded-lg bg-surface-container animate-pulse" />
+                  ))
+                ) : agents.length === 0 ? (
+                  <div className="p-md text-sm text-outline">
+                    No available agents.
+                  </div>
+                ) : (
+                  agents.map((agent) => {
+                    const selected = draftAgent?.tokenId === agent.tokenId;
+                    return (
+                      <button
+                        key={`${agent.tokenId}-${agent.activeRental ? "rented" : "owned"}`}
+                        type="button"
+                        onClick={() => selectAgentForAutomation(agent)}
+                        className={`text-left rounded-lg border p-sm flex gap-sm transition-colors ${
+                          selected
+                            ? "border-primary bg-primary/10"
+                            : "border-transparent hover:border-outline-variant hover:bg-surface-container"
+                        }`}
+                      >
+                        <AutomationAvatar name={agentDisplayName(agent)} image={agent.image} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-sm">
+                            <span className="text-sm font-semibold text-on-surface truncate">
+                              {agentDisplayName(agent)}
+                            </span>
+                            <span className="text-[11px] text-outline shrink-0">
+                              {agent.activeRental ? "Rented" : "Owned"}
+                            </span>
+                          </div>
+                          <div className="text-xs text-on-surface-variant truncate mt-xs">
+                            {agent.description ?? "Ready for automation"}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section className="min-w-0">
+          {!hasSelection ? (
+            <div className="h-full min-h-[520px] bg-surface-container-lowest border border-outline-variant/40 rounded-xl p-xl flex flex-col items-center justify-center gap-sm text-center text-outline">
+              <span className="material-symbols-outlined" style={{ fontSize: 44 }}>
+                routine
+              </span>
+              <p className="font-body-sub text-body-sub">
+                Select an automation or choose an agent to create one.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-xl overflow-hidden flex flex-col min-h-[520px]">
+              <div className="px-lg py-md border-b border-outline-variant/30 flex items-center justify-between gap-md flex-wrap">
+                <div className="flex items-center gap-md min-w-0">
+                  <AutomationAvatar name={activeAgentName} image={activeAgentImage} />
+                  <div className="min-w-0">
+                    <h3 className="font-h2 text-h2 font-semibold text-on-surface truncate">
+                      {selectedAutomation ? "Automation Settings" : "New Automation"}
+                    </h3>
+                    <p className="text-xs text-outline truncate">
+                      {activeAgentName}
+                      {selectedAutomation ? ` · updated ${formatDashboardTime(selectedAutomation.updatedAt)}` : ""}
+                    </p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-sm cursor-pointer select-none shrink-0 border border-outline-variant rounded-lg px-sm py-xs bg-surface-container">
+                  <span className={`text-xs font-semibold ${enabledInput ? "text-on-surface" : "text-outline"}`}>
+                    Enabled
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={enabledInput}
+                    onChange={(event) => {
+                      setEnabledInput(event.target.checked);
+                      setSavedNotice(false);
+                    }}
+                    className="sr-only"
+                  />
+                  <span className={`w-9 h-5 rounded-full p-0.5 transition-colors ${enabledInput ? "bg-primary" : "bg-outline-variant"}`}>
+                    <span className={`block w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${enabledInput ? "translate-x-4" : "translate-x-0"}`} />
+                  </span>
+                </label>
+              </div>
+
+              <div className="p-lg flex flex-col gap-lg">
+                <label className="flex flex-col gap-xs">
+                  <span className="text-sm font-semibold text-on-surface">Cron</span>
+                  <input
+                    type="text"
+                    value={cronInput}
+                    onChange={(event) => {
+                      setCronInput(event.target.value);
+                      setSavedNotice(false);
+                    }}
+                    placeholder="0 9 * * 1-5"
+                    className="rounded-lg border border-outline-variant bg-white px-md py-sm font-data-mono text-sm text-on-surface focus:outline-none focus:border-primary placeholder:text-outline/60"
+                  />
+                  {cronInput.trim() && !cronIsValid && (
+                    <span className="text-xs text-error">
+                      Use five cron fields, for example 0 9 * * 1-5.
+                    </span>
+                  )}
+                </label>
+
+                <label className="flex flex-col gap-xs">
+                  <span className="text-sm font-semibold text-on-surface">Instruction</span>
+                  <textarea
+                    value={instructionInput}
+                    onChange={(event) => {
+                      setInstructionInput(event.target.value);
+                      setSavedNotice(false);
+                    }}
+                    placeholder="Summarize new market signals and send me the important changes."
+                    rows={10}
+                    className="rounded-lg border border-outline-variant bg-white px-md py-sm text-sm text-on-surface focus:outline-none focus:border-primary placeholder:text-outline/60 resize-y min-h-48"
+                  />
+                </label>
+
+                <div className="flex items-center justify-between gap-md flex-wrap border-t border-outline-variant/30 pt-md">
+                  <div className="text-xs text-outline">
+                    {selectedAutomation ? "Changes are saved to the selected automation." : "This will create a new automation for the selected agent."}
+                  </div>
+                  <div className="flex items-center gap-sm">
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      disabled={!isDirty}
+                      className="rounded-full border border-outline-variant px-md py-sm text-sm font-semibold text-on-surface disabled:opacity-50"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveAutomation}
+                      disabled={!canSave}
+                      className="rounded-full bg-primary text-on-primary px-lg py-sm text-sm font-semibold disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+                {savedNotice && (
+                  <p className="text-xs font-semibold text-green-700">
+                    Saved.
+                  </p>
+                )}
+
+                <div className="border-t border-outline-variant/30 pt-lg flex flex-col gap-sm">
+                  <div className="flex items-center justify-between gap-md">
+                    <h4 className="text-sm font-semibold text-on-surface">History</h4>
+                    <span className="font-data-mono text-xs text-outline">
+                      {selectedAutomation?.history.length ?? 0}
+                    </span>
+                  </div>
+                  {selectedAutomation?.history.length ? (
+                    <div className="rounded-lg border border-outline-variant/40 overflow-hidden">
+                      {selectedAutomation.history.map((item) => (
+                        <div
+                          key={item.id}
+                          className="grid sm:grid-cols-[120px_1fr_auto] gap-sm px-md py-sm border-t first:border-t-0 border-outline-variant/20 items-start"
+                        >
+                          <span
+                            className={`w-fit rounded-full px-sm py-0.5 text-[11px] font-semibold ${
+                              item.status === "success"
+                                ? "bg-green-50 text-green-700 border border-green-200"
+                                : item.status === "failed"
+                                  ? "bg-error-container/50 text-error border border-error/20"
+                                  : "bg-surface-container-high text-on-surface-variant border border-outline-variant"
+                            }`}
+                          >
+                            {item.status}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm text-on-surface truncate">
+                              {item.summary ?? "Automation run"}
+                            </p>
+                            <p className="text-xs text-outline">
+                              {formatDashboardTime(item.startedAt)}
+                              {item.completedAt ? ` - ${formatDashboardTime(item.completedAt)}` : ""}
+                            </p>
+                          </div>
+                          <span className="font-data-mono text-[11px] text-outline">
+                            {item.id.slice(0, 8)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-md py-sm text-sm text-outline">
+                      No runs yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function AutomationAvatar({
+  name,
+  image,
+}: {
+  name: string;
+  image: string | null;
+}) {
+  return (
+    <div className="w-12 h-12 rounded-lg bg-surface-container-high overflow-hidden shrink-0">
+      {image ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={image} alt={name} className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-outline">
+          <span className="material-symbols-outlined" style={{ fontSize: 22 }}>
+            smart_toy
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -14,35 +14,36 @@ datasource db {
 // Mirrors the on-chain state and caches 0G Storage metadata for fast serving.
 model AgentToken {
   // On-chain identity
-  tokenId      String   @id              // BigInt stored as string
-  chainId      Int      @default(16602)  // 0G Galileo testnet
+  tokenId String @id // BigInt stored as string
+  chainId Int    @default(16602) // 0G Galileo testnet
 
   // On-chain hashes (bytes32 hex strings)
   metadataHash String
-  dataHash     String?                  // first IntelligentData entry
+  dataHash     String? // first IntelligentData entry
 
   // Cached ERC-721 metadata (populated once 0G Storage is accessible)
-  name         String?
-  description  String?
-  image        String?                  // served URL, e.g. /api/image/<hash>
-  imageHash    String?                  // 0G root hash of the raw image
+  name        String?
+  description String?
+  image       String? // served URL, e.g. /api/image/<hash>
+  imageHash   String? // 0G root hash of the raw image
 
   // 0G sync status
-  metadataReady  Boolean  @default(false)
+  metadataReady Boolean @default(false)
 
   // Ownership
-  owner        String?                  // checksummed address
+  owner String? // checksummed address
 
   // Rental / marketplace
-  rentOrderId        String?            // active marketplace rent order ID
-  rentPricePerSecond String?            // wei/second as decimal string
-  rentMaxDuration    Int?               // seconds (0 = unlimited)
+  rentOrderId        String? // active marketplace rent order ID
+  rentPricePerSecond String? // wei/second as decimal string
+  rentMaxDuration    Int? // seconds (0 = unlimited)
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   computeWallets AgentComputeWallet[]
-  conversations AgentConversation[]
+  conversations  AgentConversation[]
+  automations    AgentAutomation[]
 
   @@index([owner])
   @@index([metadataReady])
@@ -54,17 +55,17 @@ enum AgentConversationRole {
 }
 
 model AgentConversation {
-  id              String   @id @default(cuid())
+  id              String  @id @default(cuid())
   tokenId         String
   userAddress     String
   title           String?
   providerAddress String?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  lastMessageAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastMessageAt DateTime @default(now())
 
-  agentToken AgentToken @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
+  agentToken AgentToken                 @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
   messages   AgentConversationMessage[]
 
   @@index([tokenId, userAddress, lastMessageAt])
@@ -85,29 +86,78 @@ model AgentConversationMessage {
   @@index([conversationId, createdAt])
 }
 
+enum AgentAutomationStatus {
+  active
+  paused
+}
+
+enum AgentAutomationRunStatus {
+  running
+  success
+  failed
+}
+
+model AgentAutomation {
+  id             String                @id @default(cuid())
+  tokenId        String
+  userAddress    String
+  cronExpression String
+  instruction    String                @db.Text
+  status         AgentAutomationStatus @default(active)
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentToken AgentToken           @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
+  runs       AgentAutomationRun[]
+
+  @@index([userAddress, updatedAt])
+  @@index([tokenId, userAddress])
+  @@index([status, nextRunAt])
+}
+
+model AgentAutomationRun {
+  id           String                   @id @default(cuid())
+  automationId String
+  status       AgentAutomationRunStatus @default(running)
+  summary      String?
+  output       String?                  @db.Text
+  error        String?                  @db.Text
+  startedAt    DateTime                 @default(now())
+  completedAt  DateTime?
+  createdAt    DateTime                 @default(now())
+
+  automation AgentAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId, startedAt])
+  @@index([status, startedAt])
+}
+
 // Per-user settings (e.g. API keys for optional integrations).
 model UserSetting {
-  userAddress String @id  // checksummed/lowercased wallet address
+  userAddress String @id // checksummed/lowercased wallet address
 
-  braveApiKey    String?  // Brave Search API key for web search tool
-  telegramUserId String?  // Bound Telegram user ID (numeric string)
+  braveApiKey    String? // Brave Search API key for web search tool
+  telegramUserId String? // Bound Telegram user ID (numeric string)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Per-user hosted compute wallet for an agent.
 // Stores only derivation metadata; the private key is derived at runtime from
 // the server root secret and never persisted in the database.
 model AgentComputeWallet {
-  id          Int      @id @default(autoincrement())
+  id          Int    @id @default(autoincrement())
   tokenId     String
   userAddress String
-  hdPath      String   @unique
-  address     String   @unique
+  hdPath      String @unique
+  address     String @unique
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   agentToken AgentToken @relation(fields: [tokenId], references: [tokenId], onDelete: Cascade)
 
