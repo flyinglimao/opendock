@@ -329,9 +329,17 @@ function OwnerRentalPanel({
   const [error, setError] = useState<string | null>(null);
   const [pendingTx, setPendingTx] = useState<`0x${string}` | undefined>();
 
+  // pendingTx = listRent tx; pendingOperatorTx = setUsageOperator tx (step 1)
+  const [pendingOperatorTx, setPendingOperatorTx] = useState<`0x${string}` | undefined>();
+
   const { data: receipt } = useWaitForTransactionReceipt({
     hash: pendingTx,
     query: { enabled: !!pendingTx },
+  });
+
+  const { data: operatorReceipt } = useWaitForTransactionReceipt({
+    hash: pendingOperatorTx,
+    query: { enabled: !!pendingOperatorTx },
   });
 
   // Read marketplace usage-operator status
@@ -343,41 +351,56 @@ function OwnerRentalPanel({
     query: { enabled: !!address && !!MARKETPLACE_ADDRESS },
   });
 
+  // Step 2: once setUsageOperator is confirmed, send listRent
+  useEffect(() => {
+    if (!operatorReceipt) return;
+    setPendingOperatorTx(undefined);
+    const pricePerSecond = BigInt(Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600));
+    const maxDuration = parseInt(maxHours) * 3600;
+    writeContractAsync({
+      address: MARKETPLACE_ADDRESS,
+      abi: MARKETPLACE_ABI,
+      functionName: "listRent",
+      args: [INFT_ADDRESS, BigInt(tokenId), pricePerSecond, BigInt(maxDuration)],
+    })
+      .then((listTxHash) => setPendingTx(listTxHash))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+  }, [operatorReceipt, priceOgPerHour, maxHours, tokenId, writeContractAsync]);
+
   const handleEnableRental = useCallback(async () => {
     if (!address) return;
     setLoading(true);
     setError(null);
     try {
-      const signer = await getSigner();
-
-      // Step 1: set marketplace as usage operator (if not already)
       if (!isUsageOperator) {
+        // Step 1: authorize marketplace; listRent fires automatically after confirmation
         const txHash = await writeContractAsync({
           address: INFT_ADDRESS,
           abi: INFT_ABI,
           functionName: "setUsageOperator",
           args: [BigInt(tokenId), MARKETPLACE_ADDRESS, true],
         });
-        await signer.provider.waitForTransaction(txHash);
+        setPendingOperatorTx(txHash);
+      } else {
+        // Already authorized — go straight to listRent
+        const pricePerSecond = BigInt(Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600));
+        const maxDuration = parseInt(maxHours) * 3600;
+        const listTxHash = await writeContractAsync({
+          address: MARKETPLACE_ADDRESS,
+          abi: MARKETPLACE_ABI,
+          functionName: "listRent",
+          args: [INFT_ADDRESS, BigInt(tokenId), pricePerSecond, BigInt(maxDuration)],
+        });
+        setPendingTx(listTxHash);
       }
-
-      // Step 2: list rent order
-      const pricePerSecond =
-        BigInt(Math.round((parseFloat(priceOgPerHour) * 1e18) / 3600));
-      const maxDuration = parseInt(maxHours) * 3600;
-
-      const listTxHash = await writeContractAsync({
-        address: MARKETPLACE_ADDRESS,
-        abi: MARKETPLACE_ABI,
-        functionName: "listRent",
-        args: [INFT_ADDRESS, BigInt(tokenId), pricePerSecond, BigInt(maxDuration)],
-      });
-      setPendingTx(listTxHash);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  }, [address, tokenId, priceOgPerHour, maxHours, isUsageOperator, getSigner, writeContractAsync]);
+  }, [address, tokenId, priceOgPerHour, maxHours, isUsageOperator, writeContractAsync]);
 
   // Parse orderId from receipt and update DB
   useEffect(() => {
@@ -496,7 +519,7 @@ function OwnerRentalPanel({
               className="bg-primary text-on-primary font-label-caps text-label-caps font-semibold py-xs px-md rounded-full hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center gap-xs text-xs"
             >
               {loading && <span className="inline-block w-3 h-3 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin" />}
-              Enable Rental
+              {pendingOperatorTx ? "Authorizing…" : pendingTx ? "Listing…" : "Enable Rental"}
             </button>
           </div>
           {!MARKETPLACE_ADDRESS || MARKETPLACE_ADDRESS === "0x" ? (
