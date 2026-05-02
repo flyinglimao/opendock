@@ -6,7 +6,8 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "expire-rentals": "curl -sf -X POST http://localhost:3000/api/admin/expire-rentals | jq ."
   },
   "dependencies": {
     "@0gfoundation/0g-ts-sdk": "^1.2.6",
