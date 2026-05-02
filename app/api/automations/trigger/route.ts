@@ -52,6 +52,55 @@ function buildRunSummary(content: string): string {
   return summary.length > 180 ? `${summary.slice(0, 177)}...` : summary;
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Converts standard markdown (as produced by LLMs) to Telegram HTML.
+// Code spans are extracted first so their content is not transformed.
+// Telegram supports: <b>, <i>, <s>, <code>, <pre>, <a href="...">.
+function markdownToTelegramHtml(md: string): string {
+  // Protect fenced code blocks
+  const blocks: string[] = [];
+  let s = md.replace(/```(?:\w+\n)?([\s\S]*?)```/g, (_, code) => {
+    const i = blocks.push(`<pre>${escapeHtml(code.trim())}</pre>`) - 1;
+    return `\x00BLK${i}\x00`;
+  });
+
+  // Protect inline code
+  const inlines: string[] = [];
+  s = s.replace(/`([^`\n]+)`/g, (_, code) => {
+    const i = inlines.push(`<code>${escapeHtml(code)}</code>`) - 1;
+    return `\x00INL${i}\x00`;
+  });
+
+  // Escape HTML special chars in the remaining prose
+  s = escapeHtml(s);
+
+  s = s
+    // Bold: **text** or __text__
+    .replace(/\*\*(.+?)\*\*/gs, "<b>$1</b>")
+    .replace(/__(.+?)__/gs, "<b>$1</b>")
+    // Italic: *text* (not **) or _text_ (not __)
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<i>$1</i>")
+    .replace(/(?<!_)_([^_\n]+)_(?!_)/g, "<i>$1</i>")
+    // Strikethrough: ~~text~~
+    .replace(/~~(.+?)~~/gs, "<s>$1</s>")
+    // Links: [text](url) — URL was HTML-escaped above, which is correct for href
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    // Strip heading markers (Telegram has no heading element)
+    .replace(/^#{1,6}\s+/gm, "")
+    // Bullet list items
+    .replace(/^[-*]\s+/gm, "• ");
+
+  // Restore protected spans
+  s = s
+    .replace(/\x00BLK(\d+)\x00/g, (_, i) => blocks[Number(i)])
+    .replace(/\x00INL(\d+)\x00/g, (_, i) => inlines[Number(i)]);
+
+  return s;
+}
+
 function isUniqueConstraintError(err: unknown): boolean {
   return (
     typeof err === "object" &&
@@ -133,15 +182,21 @@ async function claimDueRun(automation: {
   }
 }
 
-async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+const TELEGRAM_REPLY_NOTICE =
+  "\n\n<i>Replies to this message are not yet supported. Visit OpenDock to continue the conversation.</i>";
+
+async function sendTelegramMessage(chatId: string, html: string): Promise<void> {
   if (!TELEGRAM_BOT_TOKEN) return;
+  // Truncate the body first, then append the notice so it always appears.
+  const body = html.length > 4000 ? `${html.slice(0, 3997)}…` : html;
   await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
+      text: body + TELEGRAM_REPLY_NOTICE,
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
     }),
   }).catch(() => null);
 }
@@ -236,9 +291,10 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
 
   const summary = buildRunSummary(result.content);
   if (userSetting?.telegramUserId) {
+    const body = markdownToTelegramHtml(result.content || summary);
     await sendTelegramMessage(
       userSetting.telegramUserId,
-      `OpenDock Automation: ${run.agentName}\n\n${result.content || summary}`
+      `<b>OpenDock Automation: ${escapeHtml(run.agentName)}</b>\n\n${body}`
     );
   }
 
@@ -297,7 +353,7 @@ async function processSingleRun(run: ClaimedRun): Promise<{
     if (setting?.telegramUserId) {
       await sendTelegramMessage(
         setting.telegramUserId,
-        `OpenDock Automation failed: ${run.agentName}\n${message}`
+        `<b>OpenDock Automation failed: ${escapeHtml(run.agentName)}</b>\n${escapeHtml(message)}`
       );
     }
     return {

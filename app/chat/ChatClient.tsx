@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
 import { buildAuthMessage, buildSessionAuthMessage } from "@/lib/auth";
 import { COMPUTE_PROVIDERS, type ComputeProvider } from "@/lib/compute-providers";
+import { MarkdownMessage } from "@/components/MarkdownMessage";
 
 interface ConversationSummary {
   id: string;
@@ -989,13 +990,17 @@ export default function ChatClient({
                       className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                     >
                       <div
-                        className={`max-w-[82%] rounded-2xl px-md py-sm font-body-main text-body-main leading-relaxed whitespace-pre-wrap ${
+                        className={`max-w-[82%] rounded-2xl px-md py-sm font-body-main text-body-main leading-relaxed ${
                           message.role === "user"
-                            ? "bg-primary text-on-primary rounded-br-sm"
+                            ? "bg-primary text-on-primary rounded-br-sm whitespace-pre-wrap"
                             : "bg-surface-container text-on-surface rounded-bl-sm"
                         }`}
                       >
-                        {message.content}
+                        {message.role === "assistant" ? (
+                          <MarkdownMessage content={message.content} />
+                        ) : (
+                          message.content
+                        )}
                       </div>
                     </div>
                   ))}

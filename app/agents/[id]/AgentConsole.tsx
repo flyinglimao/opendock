@@ -22,6 +22,7 @@ import {
   MARKETPLACE_ABI,
 } from "@/lib/contracts";
 import { COMPUTE_PROVIDERS, type ComputeProvider } from "@/lib/compute-providers";
+import { MarkdownMessage } from "@/components/MarkdownMessage";
 
 interface Message {
   role: "user" | "assistant";
@@ -1488,11 +1489,17 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
           )}
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[80%] rounded-2xl px-md py-sm font-body-main text-body-main leading-relaxed whitespace-pre-wrap ${
+              <div className={`max-w-[80%] rounded-2xl px-md py-sm font-body-main text-body-main leading-relaxed ${
                 m.role === "user"
-                  ? "bg-primary text-on-primary rounded-br-sm"
+                  ? "bg-primary text-on-primary rounded-br-sm whitespace-pre-wrap"
                   : "bg-surface-container text-on-surface rounded-bl-sm"
-              }`}>{m.content}</div>
+              }`}>
+                {m.role === "assistant" ? (
+                  <MarkdownMessage content={m.content} />
+                ) : (
+                  m.content
+                )}
+              </div>
             </div>
           ))}
           {sending && (
