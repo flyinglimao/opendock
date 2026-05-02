@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  createZGComputeNetworkBroker,
-  createZGComputeNetworkReadOnlyBroker,
-} from "@0glabs/0g-serving-broker";
+import { createZGComputeNetworkBroker } from "@0glabs/0g-serving-broker";
 import { prisma } from "@/lib/db";
 import { checkOnChainAuth } from "@/lib/auth";
 import { downloadZGJson } from "@/lib/0g-download";
@@ -16,45 +13,14 @@ import {
   type EncryptedAgentPayload,
 } from "@/lib/encryption";
 import { findNextCronOccurrence } from "@/lib/cron";
-import { KB_TOOLS, executeKBTool, getKBFiles, type KBFile } from "@/lib/kb-tools";
-import { WEB_SEARCH_TOOL, executeBraveSearch } from "@/lib/web-search";
+import { getKBFiles } from "@/lib/kb-tools";
+import { getServiceMetadata, runAgentLoop } from "@/lib/agent-loop";
 
 export const dynamic = "force-dynamic";
 
-const ZG_RPC =
-  process.env.NEXT_PUBLIC_ZG_EVM_RPC ??
-  process.env.ZG_EVM_RPC ??
-  "https://rpc.ankr.com/0g_galileo_testnet_evm";
 const DEFAULT_PROVIDER_ADDRESS = COMPUTE_PROVIDERS[0].address;
-const MAX_AUTOMATIONS_PER_TRIGGER = 25;
-const MAX_TOOL_ITERATIONS = 8;
 const TRIGGER_SECRET = process.env.CRON_SECRET;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-interface ToolCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-}
-
-type LLMMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
-
-interface LoopResult {
-  content: string;
-  usage: unknown;
-  ok: boolean;
-  errorData?: unknown;
-  errorStatus?: number;
-}
 
 interface ClaimedRun {
   id: string;
@@ -74,26 +40,6 @@ function isAuthorizedTrigger(req: NextRequest): boolean {
   return auth === `Bearer ${TRIGGER_SECRET}` || secret === TRIGGER_SECRET;
 }
 
-function buildSystemPrompt(
-  systemPrompt: string | undefined,
-  hasKB: boolean
-): string {
-  const base = systemPrompt?.trim() ?? "";
-  let extra = "";
-  if (hasKB) {
-    extra +=
-      "\n\nYou have access to a knowledge base. Use the provided tools" +
-      " (kb_list_files, kb_search, kb_read_file) to find and read relevant" +
-      " information before answering questions that require specific knowledge.";
-  }
-  extra +=
-    "\n\nYou have access to a web_search tool. Use it to look up current" +
-    " information, recent events, or anything that may not be in your training data." +
-    " If the tool returns an error asking the user to configure an API key, relay" +
-    " that message to the user as-is.";
-  return base + extra;
-}
-
 function buildConversationTitle(instruction: string): string {
   const title = instruction.replace(/\s+/g, " ").trim();
   if (!title) return "Automation run";
@@ -104,139 +50,6 @@ function buildRunSummary(content: string): string {
   const summary = content.replace(/\s+/g, " ").trim();
   if (!summary) return "Automation completed";
   return summary.length > 180 ? `${summary.slice(0, 177)}...` : summary;
-}
-
-async function getServiceMetadata(providerAddress: string) {
-  const broker = await createZGComputeNetworkReadOnlyBroker(ZG_RPC);
-  const services = await broker.inference.listService();
-  const service = services.find(
-    (item) => item.provider.toLowerCase() === providerAddress.toLowerCase()
-  );
-  if (!service) throw new Error("Provider not found");
-  return {
-    endpoint: `${service.url}/v1/proxy`,
-    model: service.model,
-  };
-}
-
-async function runAgentLoop(
-  endpoint: string,
-  model: string,
-  authorization: string,
-  systemPrompt: string,
-  messages: ChatMessage[],
-  kbFiles: KBFile[],
-  hostedBroker: Awaited<ReturnType<typeof createZGComputeNetworkBroker>>,
-  providerAddress: string,
-  braveApiKey: string | null
-): Promise<LoopResult> {
-  const tools = [
-    ...(kbFiles.length > 0 ? [...KB_TOOLS] : []),
-    WEB_SEARCH_TOOL,
-  ];
-  const internalMessages: LLMMessage[] = messages.map((message) => ({
-    role: message.role,
-    content: message.content,
-  }));
-
-  let lastUsage: unknown = null;
-  let assistantContent = "";
-
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter += 1) {
-    const reqBody: Record<string, unknown> = {
-      model,
-      messages: [
-        ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-        ...internalMessages,
-      ],
-      tools,
-    };
-
-    const llmResponse = await fetch(`${endpoint}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authorization,
-      },
-      body: JSON.stringify(reqBody),
-    });
-
-    const llmData = (await llmResponse.json()) as {
-      choices?: Array<{
-        message?: {
-          content?: string | null;
-          tool_calls?: ToolCall[];
-        };
-      }>;
-      id?: string;
-      chatID?: string;
-      usage?: unknown;
-      error?: unknown;
-    };
-
-    if (!llmResponse.ok) {
-      return {
-        content: "",
-        usage: null,
-        ok: false,
-        errorData: llmData.error ?? "0G provider request failed",
-        errorStatus: llmResponse.status,
-      };
-    }
-
-    const chatID =
-      llmResponse.headers.get("ZG-Res-Key") ??
-      llmResponse.headers.get("zg-res-key") ??
-      llmData.id ??
-      llmData.chatID ??
-      null;
-    lastUsage = llmData.usage;
-    if (chatID) {
-      await hostedBroker.inference.processResponse(
-        providerAddress,
-        chatID,
-        llmData.usage ? JSON.stringify(llmData.usage) : undefined
-      );
-    }
-
-    const message = llmData.choices?.[0]?.message;
-    if (message?.content) assistantContent = message.content;
-    if (!message?.tool_calls?.length) {
-      return { content: assistantContent, usage: lastUsage, ok: true };
-    }
-
-    internalMessages.push({
-      role: "assistant",
-      content: message.content ?? null,
-      tool_calls: message.tool_calls,
-    });
-
-    for (const toolCall of message.tool_calls) {
-      let toolArgs: Record<string, string> = {};
-      try {
-        toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, string>;
-      } catch {}
-
-      const result =
-        toolCall.function.name === "web_search"
-          ? braveApiKey
-            ? await executeBraveSearch(toolArgs.query ?? "", braveApiKey)
-            : JSON.stringify({
-                error:
-                  "Web search is not configured. Please ask the user to add their" +
-                  " Brave Search API key in the OpenDock Dashboard (Settings section)" +
-                  " to enable this feature.",
-              })
-          : executeKBTool(toolCall.function.name, toolArgs, kbFiles);
-      internalMessages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: result,
-      });
-    }
-  }
-
-  return { content: assistantContent, usage: lastUsage, ok: true };
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -362,20 +175,20 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
     where: { userAddress: run.userAddress.toLowerCase() },
     select: { braveApiKey: true, telegramUserId: true },
   });
-  const systemPrompt = buildSystemPrompt(payload.systemPrompt, kbFiles.length > 0);
+
   const { endpoint, model } = await getServiceMetadata(DEFAULT_PROVIDER_ADDRESS);
   const { signer } = getAgentComputeWalletSigner(run.tokenId, run.userAddress);
   const hostedBroker = await createZGComputeNetworkBroker(signer);
   const hostedHeaders = await hostedBroker.inference.getRequestHeaders(
     DEFAULT_PROVIDER_ADDRESS
   );
-  const instruction = run.instruction;
+
   const result = await runAgentLoop(
     endpoint,
     model,
     hostedHeaders.Authorization,
-    systemPrompt,
-    [{ role: "user", content: instruction }],
+    payload.systemPrompt,
+    [{ role: "user", content: run.instruction }],
     kbFiles,
     hostedBroker,
     DEFAULT_PROVIDER_ADDRESS,
@@ -405,7 +218,7 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
           conversationId: created.id,
           sequence: 1,
           role: "user",
-          content: instruction,
+          content: run.instruction,
           createdAt: now,
         },
         {
@@ -438,6 +251,65 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
   };
 }
 
+async function processSingleRun(run: ClaimedRun): Promise<{
+  automationId: string;
+  runId: string;
+  scheduledFor: string;
+  status: string;
+  conversationId?: string | null;
+  error?: string;
+}> {
+  try {
+    const result = await executeClaimedRun(run);
+    await prisma.agentAutomationRun.update({
+      where: { id: run.id },
+      data: {
+        status: result.status,
+        conversationId: result.conversationId,
+        summary: result.summary,
+        output: result.output,
+        error: result.error,
+        completedAt: new Date(),
+      },
+    });
+    return {
+      automationId: run.automationId,
+      runId: run.id,
+      scheduledFor: run.scheduledFor.toISOString(),
+      status: result.status,
+      conversationId: result.conversationId,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await prisma.agentAutomationRun.update({
+      where: { id: run.id },
+      data: {
+        status: "failed",
+        summary: message,
+        error: message,
+        completedAt: new Date(),
+      },
+    });
+    const setting = await prisma.userSetting.findUnique({
+      where: { userAddress: run.userAddress.toLowerCase() },
+      select: { telegramUserId: true },
+    });
+    if (setting?.telegramUserId) {
+      await sendTelegramMessage(
+        setting.telegramUserId,
+        `OpenDock Automation failed: ${run.agentName}\n${message}`
+      );
+    }
+    return {
+      automationId: run.automationId,
+      runId: run.id,
+      scheduledFor: run.scheduledFor.toISOString(),
+      status: "failed",
+      error: message,
+    };
+  }
+}
+
 async function triggerAutomations(req: NextRequest) {
   if (!isAuthorizedTrigger(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -450,7 +322,6 @@ async function triggerAutomations(req: NextRequest) {
       OR: [{ nextRunAt: null }, { nextRunAt: { lte: now } }],
     },
     orderBy: [{ nextRunAt: "asc" }, { createdAt: "asc" }],
-    take: MAX_AUTOMATIONS_PER_TRIGGER,
     select: {
       id: true,
       tokenId: true,
@@ -469,64 +340,15 @@ async function triggerAutomations(req: NextRequest) {
     },
   });
 
-  const claimed: ClaimedRun[] = [];
-  for (const automation of automations) {
-    const run = await claimDueRun(automation, now);
-    if (run) claimed.push(run);
-  }
+  // Claim all due runs in parallel; each uses its own DB transaction and the
+  // unique constraint on (automationId, scheduledFor) prevents double-claiming.
+  const claimResults = await Promise.all(
+    automations.map((automation) => claimDueRun(automation, now))
+  );
+  const claimed = claimResults.filter((run): run is ClaimedRun => run !== null);
 
-  const results = [];
-  for (const run of claimed) {
-    try {
-      const result = await executeClaimedRun(run);
-      await prisma.agentAutomationRun.update({
-        where: { id: run.id },
-        data: {
-          status: result.status,
-          conversationId: result.conversationId,
-          summary: result.summary,
-          output: result.output,
-          error: result.error,
-          completedAt: new Date(),
-        },
-      });
-      results.push({
-        automationId: run.automationId,
-        runId: run.id,
-        scheduledFor: run.scheduledFor.toISOString(),
-        status: result.status,
-        conversationId: result.conversationId,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await prisma.agentAutomationRun.update({
-        where: { id: run.id },
-        data: {
-          status: "failed",
-          summary: message,
-          error: message,
-          completedAt: new Date(),
-        },
-      });
-      const setting = await prisma.userSetting.findUnique({
-        where: { userAddress: run.userAddress.toLowerCase() },
-        select: { telegramUserId: true },
-      });
-      if (setting?.telegramUserId) {
-        await sendTelegramMessage(
-          setting.telegramUserId,
-          `OpenDock Automation failed: ${run.agentName}\n${message}`
-        );
-      }
-      results.push({
-        automationId: run.automationId,
-        runId: run.id,
-        scheduledFor: run.scheduledFor.toISOString(),
-        status: "failed",
-        error: message,
-      });
-    }
-  }
+  // Execute all claimed runs in parallel to minimize total wall-clock time.
+  const results = await Promise.all(claimed.map(processSingleRun));
 
   return NextResponse.json({
     processed: claimed.length,
