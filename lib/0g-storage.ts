@@ -41,9 +41,8 @@ export interface AgentMetadata {
 export interface AgentPayload {
   name: string;
   systemPrompt: string;
-  /** Raw text content of an optional knowledge-base file */
-  knowledgeBase?: string;
-  knowledgeBaseName?: string;
+  /** Knowledge base as multiple named files (preferred over the legacy single-file fields). */
+  knowledgeBaseFiles?: Array<{ name: string; content: string }>;
 }
 
 interface EncryptedAgentPayload {
@@ -125,7 +124,11 @@ export async function uploadAgentData(
   const res = await fetch("/api/intelligence/encrypt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      name: payload.name,
+      systemPrompt: payload.systemPrompt,
+      knowledgeBaseFiles: payload.knowledgeBaseFiles,
+    }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => null) as { error?: string } | null;

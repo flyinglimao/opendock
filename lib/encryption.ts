@@ -6,6 +6,7 @@
 // It is not equivalent to TEE because the server can decrypt plaintext.
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import type { KBFile } from "@/lib/kb-tools";
 
 export interface EncryptedAgentPayload {
   version: 1;
@@ -19,8 +20,11 @@ export interface EncryptedAgentPayload {
 export interface AgentIntelligencePayload {
   name?: string;
   systemPrompt?: string;
+  /** @deprecated Use knowledgeBaseFiles instead */
   knowledgeBase?: string | null;
+  /** @deprecated Use knowledgeBaseFiles instead */
   knowledgeBaseName?: string | null;
+  knowledgeBaseFiles?: KBFile[];
   version?: number;
 }
 

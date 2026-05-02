@@ -174,7 +174,7 @@ export default function CreateAgentForm() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [kbFile, setKbFile] = useState<File | null>(null);
+  const [kbFiles, setKbFiles] = useState<File[]>([]);
   const [isKbDragging, setIsKbDragging] = useState(false);
   const [isImgDragging, setIsImgDragging] = useState(false);
 
@@ -272,25 +272,30 @@ export default function CreateAgentForm() {
     }
   }
 
-  function handleKbChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    if (file && !isTextFile(file)) {
-      alert("Only plain text files are supported (TXT, MD, CSV, JSON, etc.)");
-      return;
+  function addKbFiles(incoming: FileList | File[]) {
+    const valid: File[] = [];
+    for (const f of Array.from(incoming)) {
+      if (!isTextFile(f)) {
+        alert(`"${f.name}" is not supported. Only plain text files (TXT, MD, CSV, JSON, etc.) are allowed.`);
+        return;
+      }
+      valid.push(f);
     }
-    setKbFile(file);
+    setKbFiles((prev) => {
+      const names = new Set(prev.map((f) => f.name));
+      return [...prev, ...valid.filter((f) => !names.has(f.name))];
+    });
+  }
+
+  function handleKbChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files?.length) addKbFiles(e.target.files);
+    e.target.value = "";
   }
 
   function handleKbDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsKbDragging(false);
-    const file = e.dataTransfer.files?.[0] ?? null;
-    if (!file) return;
-    if (!isTextFile(file)) {
-      alert("Only plain text files are supported (TXT, MD, CSV, JSON, etc.)");
-      return;
-    }
-    setKbFile(file);
+    if (e.dataTransfer.files?.length) addKbFiles(e.dataTransfer.files);
   }
 
   const handleDeploy = useCallback(async () => {
@@ -341,10 +346,9 @@ export default function CreateAgentForm() {
 
       // ---- Step 3: Upload encrypted intelligence data ----
       setStep({ id: "uploading_data" });
-      let kbText: string | undefined;
-      if (kbFile) {
-        kbText = await kbFile.text();
-      }
+      const knowledgeBaseFiles = kbFiles.length > 0
+        ? await Promise.all(kbFiles.map(async (f) => ({ name: f.name, content: await f.text() })))
+        : undefined;
       const {
         rootHash: dataHash,
         txHash: dataTx,
@@ -352,8 +356,7 @@ export default function CreateAgentForm() {
         {
           name: agentName,
           systemPrompt,
-          knowledgeBase: kbText,
-          knowledgeBaseName: kbFile?.name,
+          knowledgeBaseFiles,
         },
         signer
       );
@@ -391,7 +394,7 @@ export default function CreateAgentForm() {
     description,
     imageFile,
     systemPrompt,
-    kbFile,
+    kbFiles,
     isConnected,
     walletClient,
     address,
@@ -624,9 +627,41 @@ export default function CreateAgentForm() {
           {/* Knowledge Base */}
           <div className="flex flex-col gap-sm">
             <span className="font-label-caps text-label-caps font-semibold text-on-surface">
-              Upload Knowledge Base{" "}
+              Knowledge Base Files{" "}
               <span className="font-normal text-outline">(optional)</span>
             </span>
+
+            {/* Uploaded file list */}
+            {kbFiles.length > 0 && (
+              <ul className="flex flex-col gap-xs">
+                {kbFiles.map((f) => (
+                  <li
+                    key={f.name}
+                    className="flex items-center justify-between gap-sm bg-surface-container rounded-lg px-md py-sm"
+                  >
+                    <div className="flex items-center gap-sm min-w-0">
+                      <span className="material-symbols-outlined text-outline" style={{ fontSize: 18 }}>
+                        description
+                      </span>
+                      <span className="font-body-sub text-body-sub text-on-surface truncate">{f.name}</span>
+                      <span className="font-body-sub text-body-sub text-outline shrink-0">
+                        {(f.size / 1024).toFixed(1)} KB
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isRunning}
+                      onClick={() => setKbFiles((prev) => prev.filter((x) => x.name !== f.name))}
+                      className="text-outline hover:text-error transition-colors disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* Drop zone */}
             <div
               onClick={() => !isRunning && kbInputRef.current?.click()}
               onDragOver={(e) => {
@@ -635,7 +670,7 @@ export default function CreateAgentForm() {
               }}
               onDragLeave={() => setIsKbDragging(false)}
               onDrop={isRunning ? undefined : handleKbDrop}
-              className={`border-2 border-dashed transition-colors rounded-xl p-xl flex flex-col items-center justify-center ${
+              className={`border-2 border-dashed transition-colors rounded-xl p-lg flex flex-col items-center justify-center ${
                 isRunning
                   ? "opacity-50 cursor-not-allowed"
                   : "cursor-pointer group"
@@ -646,33 +681,21 @@ export default function CreateAgentForm() {
               }`}
             >
               <span
-                className="material-symbols-outlined text-outline group-hover:text-primary mb-md transition-colors"
-                style={{ fontSize: 32 }}
+                className="material-symbols-outlined text-outline group-hover:text-primary mb-xs transition-colors"
+                style={{ fontSize: 28 }}
               >
                 upload_file
               </span>
-              {kbFile ? (
-                <>
-                  <span className="font-body-main text-body-main text-on-surface font-semibold">
-                    {kbFile.name}
-                  </span>
-                  <span className="font-body-sub text-body-sub text-outline mt-xs">
-                    {(kbFile.size / 1024 / 1024).toFixed(2)} MB
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="font-body-main text-body-main text-on-surface-variant font-semibold group-hover:text-primary transition-colors">
-                    Click to upload or drag and drop
-                  </span>
-                  <span className="font-body-sub text-body-sub text-outline mt-xs">
-                    TXT, MD, CSV, JSON, YAML… any plain text (Max 10MB)
-                  </span>
-                </>
-              )}
+              <span className="font-body-sub text-body-sub text-on-surface-variant group-hover:text-primary transition-colors text-center">
+                {kbFiles.length > 0 ? "Add more files" : "Click to upload or drag and drop"}
+              </span>
+              <span className="font-body-sub text-body-sub text-outline mt-xs text-center">
+                TXT, MD, CSV, JSON, YAML… any plain text
+              </span>
               <input
                 ref={kbInputRef}
                 type="file"
+                multiple
                 accept=".txt,.md,.csv,.json,.yaml,.yml,.toml,.xml,.log,text/*"
                 onChange={handleKbChange}
                 className="hidden"

@@ -7,7 +7,10 @@ import { encryptAgentIntelligence } from "@/lib/encryption";
 interface EncryptBody {
   name: string;
   systemPrompt: string;
+  knowledgeBaseFiles?: Array<{ name: string; content: string }>;
+  /** @deprecated */
   knowledgeBase?: string;
+  /** @deprecated */
   knowledgeBaseName?: string;
 }
 
@@ -24,6 +27,7 @@ export async function POST(req: NextRequest) {
   const envelope = encryptAgentIntelligence({
     name: body.name,
     systemPrompt: body.systemPrompt,
+    knowledgeBaseFiles: body.knowledgeBaseFiles,
     knowledgeBase: body.knowledgeBase ?? null,
     knowledgeBaseName: body.knowledgeBaseName ?? null,
     version: 1,

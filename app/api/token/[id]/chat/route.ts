@@ -4,6 +4,9 @@
 // The browser generates the 0G serving Authorization header with the user's
 // wallet, but the server decrypts the agent intelligence and calls the model.
 // This keeps the system prompt out of browser responses.
+//
+// When the agent has a knowledge base, tool calling is used so the LLM can
+// search and read files on demand rather than receiving the entire KB upfront.
 
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -21,11 +24,14 @@ import {
   decryptAgentIntelligence,
   type EncryptedAgentPayload,
 } from "@/lib/encryption";
+import { KB_TOOLS, executeKBTool, getKBFiles, type KBFile } from "@/lib/kb-tools";
 
 const ZG_RPC =
   process.env.NEXT_PUBLIC_ZG_EVM_RPC ??
   process.env.ZG_EVM_RPC ??
   "https://rpc.ankr.com/0g_galileo_testnet_evm";
+
+// ---- types ----
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -42,16 +48,32 @@ interface ChatBody {
   messages: ChatMessage[];
 }
 
+interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+type LLMMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+// ---- helpers ----
+
 function buildSystemPrompt(
   systemPrompt: string | undefined,
-  knowledgeBase: string | null | undefined,
-  knowledgeBaseName: string | null | undefined
+  hasKB: boolean
 ): string {
   const base = systemPrompt?.trim() ?? "";
-  const kb = knowledgeBase?.trim();
-  if (!kb) return base;
-  const label = knowledgeBaseName ? `Knowledge base (${knowledgeBaseName})` : "Knowledge base";
-  return `${base}\n\n${label}:\n${kb}`;
+  if (!hasKB) return base;
+  return (
+    base +
+    "\n\nYou have access to a knowledge base. Use the provided tools" +
+    " (kb_list_files, kb_search, kb_read_file) to find and read relevant" +
+    " information before answering questions that require specific knowledge."
+  );
 }
 
 function buildConversationTitle(message: string): string {
@@ -72,6 +94,148 @@ async function getServiceMetadata(providerAddress: string) {
     model: service.model,
   };
 }
+
+// ---- agent loop ----
+
+const MAX_TOOL_ITERATIONS = 8;
+
+interface LoopResult {
+  content: string;
+  usage: unknown;
+  chatID: string | null;
+  ok: boolean;
+  errorData?: unknown;
+  errorStatus?: number;
+}
+
+async function runAgentLoop(
+  endpoint: string,
+  model: string,
+  authorization: string,
+  systemPrompt: string,
+  messages: ChatMessage[],
+  kbFiles: KBFile[],
+  hostedBroker: Awaited<ReturnType<typeof createZGComputeNetworkBroker>> | null,
+  providerAddress: string,
+  walletMode: "hosted" | "user"
+): Promise<LoopResult> {
+  const tools = kbFiles.length > 0 ? KB_TOOLS : undefined;
+  const internalMessages: LLMMessage[] = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  let lastChatID: string | null = null;
+  let lastUsage: unknown = null;
+  let assistantContent = "";
+
+  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    const reqBody: Record<string, unknown> = {
+      model,
+      messages: [
+        ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+        ...internalMessages,
+      ],
+    };
+    if (tools) reqBody.tools = tools;
+
+    const llmResponse = await fetch(`${endpoint}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authorization,
+      },
+      body: JSON.stringify(reqBody),
+    });
+
+    const llmData = (await llmResponse.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          tool_calls?: ToolCall[];
+        };
+      }>;
+      id?: string;
+      chatID?: string;
+      usage?: unknown;
+      error?: unknown;
+    };
+
+    if (!llmResponse.ok) {
+      return {
+        content: "",
+        usage: null,
+        chatID: null,
+        ok: false,
+        errorData: llmData.error ?? "0G provider request failed",
+        errorStatus: llmResponse.status,
+      };
+    }
+
+    const chatID =
+      llmResponse.headers.get("ZG-Res-Key") ??
+      llmResponse.headers.get("zg-res-key") ??
+      llmData.id ??
+      llmData.chatID ??
+      null;
+    lastChatID = chatID;
+    lastUsage = llmData.usage;
+
+    if (walletMode === "hosted" && hostedBroker && chatID) {
+      await hostedBroker.inference.processResponse(
+        providerAddress,
+        chatID,
+        llmData.usage ? JSON.stringify(llmData.usage) : undefined
+      );
+    }
+
+    const message = llmData.choices?.[0]?.message;
+    if (message?.content) assistantContent = message.content;
+
+    // No tool calls → final answer
+    if (!message?.tool_calls?.length) {
+      return {
+        content: assistantContent,
+        usage: lastUsage,
+        chatID: walletMode === "hosted" ? null : lastChatID,
+        ok: true,
+      };
+    }
+
+    // Add assistant turn with tool_calls to the running context
+    internalMessages.push({
+      role: "assistant",
+      content: message.content ?? null,
+      tool_calls: message.tool_calls,
+    });
+
+    // Execute each tool call and append results
+    for (const toolCall of message.tool_calls) {
+      let toolArgs: Record<string, string> = {};
+      try {
+        toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, string>;
+      } catch {
+        // ignore parse errors; executeKBTool handles missing args gracefully
+      }
+      const result = executeKBTool(toolCall.function.name, toolArgs, kbFiles);
+      internalMessages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: result,
+      });
+    }
+  }
+
+  // Hit max iterations — return whatever content we accumulated
+  return {
+    content: assistantContent,
+    usage: lastUsage,
+    chatID: walletMode === "hosted" ? null : lastChatID,
+    ok: true,
+  };
+}
+
+// ---- route handler ----
 
 export async function POST(
   req: NextRequest,
@@ -166,13 +330,11 @@ export async function POST(
   }
 
   let systemPrompt: string;
+  let kbFiles: KBFile[];
   try {
     const payload = decryptAgentIntelligence(envelope);
-    systemPrompt = buildSystemPrompt(
-      payload.systemPrompt,
-      payload.knowledgeBase,
-      payload.knowledgeBaseName
-    );
+    kbFiles = getKBFiles(payload);
+    systemPrompt = buildSystemPrompt(payload.systemPrompt, kbFiles.length > 0);
   } catch {
     return NextResponse.json(
       { error: "Encrypted intelligence could not be decrypted with this server key" },
@@ -196,52 +358,26 @@ export async function POST(
       authorization = hostedHeaders.Authorization;
     }
 
-    const response = await fetch(`${endpoint}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authorization,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-          ...body.messages,
-        ],
-      }),
-    });
+    const result = await runAgentLoop(
+      endpoint,
+      model,
+      authorization,
+      systemPrompt,
+      body.messages,
+      kbFiles,
+      hostedBroker,
+      body.providerAddress,
+      walletMode
+    );
 
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-      id?: string;
-      chatID?: string;
-      usage?: unknown;
-      error?: unknown;
-    };
-
-    if (!response.ok) {
+    if (!result.ok) {
       return NextResponse.json(
-        { error: data.error ?? "0G provider request failed" },
-        { status: response.status }
+        { error: result.errorData ?? "0G provider request failed" },
+        { status: result.errorStatus ?? 500 }
       );
     }
 
-    const chatID =
-      response.headers.get("ZG-Res-Key") ??
-      response.headers.get("zg-res-key") ??
-      data.id ??
-      data.chatID ??
-      null;
-
-    if (walletMode === "hosted" && hostedBroker && chatID) {
-      await hostedBroker.inference.processResponse(
-        body.providerAddress,
-        chatID,
-        data.usage ? JSON.stringify(data.usage) : undefined
-      );
-    }
-
-    const assistantMessage = data.choices?.[0]?.message?.content ?? "";
+    const assistantMessage = result.content;
     const now = new Date();
     const conversation = await prisma.$transaction(async (tx) => {
       const activeConversation =
@@ -300,8 +436,8 @@ export async function POST(
 
     return NextResponse.json({
       content: assistantMessage,
-      chatID: walletMode === "hosted" ? null : chatID,
-      usage: data.usage ?? null,
+      chatID: result.chatID,
+      usage: result.usage ?? null,
       conversation: {
         id: conversation.id,
         title: conversation.title,
