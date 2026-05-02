@@ -21,21 +21,7 @@ import {
   MARKETPLACE_ADDRESS,
   MARKETPLACE_ABI,
 } from "@/lib/contracts";
-
-const PROVIDERS = [
-  {
-    label: "Qwen 2.5 7B",
-    address: "0xa48f01287233509FD694a22Bf840225062E67836",
-  },
-  {
-    label: "GPT-OSS-20B",
-    address: "0x8e60d466FD16798Bec4868aa4CE38586D5590049",
-  },
-  {
-    label: "Gemma 3 27B",
-    address: "0x69Eb5a0BD7d0f4bF39eD5CE9Bd3376c61863aE08",
-  },
-];
+import { COMPUTE_PROVIDERS, type ComputeProvider } from "@/lib/compute-providers";
 
 interface Message {
   role: "user" | "assistant";
@@ -84,7 +70,6 @@ const AGENT_COMPUTE_WALLET_DELEGATE_ABI = [
   "function depositLedger(address ledger) payable",
   "function fundProvider(address ledger,address provider,string serviceName,uint256 transferAmount)",
   "function depositAndFundProvider(address ledger,address provider,string serviceName,uint256 transferAmount) payable",
-  "function refundLedgerToOwner(address ledger,uint256 amount)",
 ] as const;
 
 function isUintString(value: string | null | undefined): value is string {
@@ -168,7 +153,6 @@ function LedgerPanel({
   loading,
   onDeposit,
   onTransfer,
-  onWithdraw,
   onSetupDelegate,
   providerAddress,
   mode,
@@ -183,7 +167,6 @@ function LedgerPanel({
   loading: boolean;
   onDeposit: (amount: number) => void;
   onTransfer: (provider: string, amount: number) => void;
-  onWithdraw: (amount: number) => void;
   onSetupDelegate: () => void;
   providerAddress: string;
   mode: ComputeWalletMode;
@@ -194,7 +177,6 @@ function LedgerPanel({
 }) {
   const [depositAmt, setDepositAmt] = useState("3");
   const [transferAmt, setTransferAmt] = useState("1");
-  const [withdrawAmt, setWithdrawAmt] = useState("1");
   const needsHostedSetup = mode === "hosted" && delegateReady === false;
 
   if (hasLedger === null) {
@@ -319,22 +301,6 @@ function LedgerPanel({
               >
                 {loading && <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                 {needsHostedSetup ? "Enable First" : "Transfer"}
-              </button>
-            </div>
-            <div className="flex gap-sm items-center">
-              <span className="text-amber-700 text-xs font-semibold">Withdraw:</span>
-              <input
-                type="number" min="0.001" step="0.001" value={withdrawAmt}
-                onChange={(e) => setWithdrawAmt(e.target.value)}
-                className="bg-white border border-amber-300 rounded-lg px-sm py-xs font-data-mono text-data-mono w-20 focus:outline-none focus:border-amber-500"
-              />
-              <span className="text-amber-700 text-xs">OG</span>
-              <button
-                onClick={() => onWithdraw(parseFloat(withdrawAmt))}
-                disabled={loading || needsHostedSetup || balance === null || balance <= 0}
-                className="bg-white text-amber-800 border border-amber-300 font-label-caps text-label-caps font-semibold py-xs px-sm rounded-full hover:bg-amber-100 transition-colors disabled:opacity-50 text-xs"
-              >
-                Withdraw
               </button>
             </div>
           </div>
@@ -710,7 +676,9 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0]);
+  const [selectedProvider, setSelectedProvider] = useState<ComputeProvider>(
+    COMPUTE_PROVIDERS[0]
+  );
   const [computeWalletMode, setComputeWalletMode] = useState<ComputeWalletMode>("hosted");
 
   const [ledgerBalance, setLedgerBalance] = useState<number | null>(null);
@@ -958,47 +926,6 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
     refreshLedger,
   ]);
 
-  const handleWithdraw = useCallback(async (amount: number) => {
-    if (fundLoading || amount <= 0) return;
-    setFundLoading(true); setError(null);
-    try {
-      if (computeWalletMode === "hosted") {
-        if (!hostedWalletAddress) throw new Error("Hosted wallet is not ready yet");
-        if (!hostedDelegateReady || !hostedFundingConfig) {
-          throw new Error("Enable hosted wallet before withdrawing.");
-        }
-        const signer = await getSigner();
-        const delegate = new Contract(
-          hostedWalletAddress,
-          AGENT_COMPUTE_WALLET_DELEGATE_ABI,
-          signer
-        );
-        const tx = await delegate.refundLedgerToOwner(
-          hostedFundingConfig.ledgerAddress,
-          ogToWei(amount)
-        );
-        await tx.wait();
-      } else {
-        const broker = await getBroker();
-        await broker.ledger.refund(amount);
-      }
-      await refreshLedger();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setFundLoading(false);
-    }
-  }, [
-    computeWalletMode,
-    fundLoading,
-    getBroker,
-    getSigner,
-    hostedDelegateReady,
-    hostedFundingConfig,
-    hostedWalletAddress,
-    refreshLedger,
-  ]);
-
   // Send message
   const sendMessage = useCallback(async () => {
     if (!input.trim() || sending || !address) return;
@@ -1148,10 +1075,10 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
             )}
             <select
               value={selectedProvider.address}
-              onChange={(e) => setSelectedProvider(PROVIDERS.find((p) => p.address === e.target.value) ?? PROVIDERS[0])}
+              onChange={(e) => setSelectedProvider(COMPUTE_PROVIDERS.find((p) => p.address === e.target.value) ?? COMPUTE_PROVIDERS[0])}
               className="bg-surface-container border border-outline-variant rounded-lg px-sm py-xs text-sm text-on-surface focus:outline-none focus:border-primary"
             >
-              {PROVIDERS.map((p) => (
+              {COMPUTE_PROVIDERS.map((p) => (
                 <option key={p.address} value={p.address}>{p.label}</option>
               ))}
             </select>
@@ -1205,7 +1132,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
         <div className="px-lg pt-md">
           <LedgerPanel
             balance={ledgerBalance} providerBalance={providerBalance} hasLedger={hasLedger} loading={fundLoading}
-            onDeposit={handleDeposit} onTransfer={handleTransfer} onWithdraw={handleWithdraw} onSetupDelegate={handleSetupHostedWallet}
+            onDeposit={handleDeposit} onTransfer={handleTransfer} onSetupDelegate={handleSetupHostedWallet}
             providerAddress={selectedProvider.address}
             mode={computeWalletMode}
             walletAddress={computeWalletMode === "hosted" ? hostedWalletAddress : address ?? null}

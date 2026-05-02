@@ -15,6 +15,7 @@ import {
   hasAgentComputeRelayerSecret,
 } from "@/lib/agent-compute-wallet";
 import { checkOnChainAuth, verifyAuthHeader } from "@/lib/auth";
+import { COMPUTE_PROVIDERS } from "@/lib/compute-providers";
 
 interface TransferBody {
   providerAddress?: string;
@@ -128,9 +129,24 @@ async function getHostedWalletState(
   }
 
   let providerBalanceWei = "0";
+  let providerBalances: { address: string; balanceWei: string }[] =
+    COMPUTE_PROVIDERS.map((provider) => ({
+      address: provider.address,
+      balanceWei: "0",
+    }));
   if (providerAddress) {
     try {
       const providers = await broker.ledger.getProvidersWithBalance("inference");
+      providerBalances = COMPUTE_PROVIDERS.map((knownProvider) => {
+        const match = providers.find(
+          ([provider]) =>
+            provider.toLowerCase() === knownProvider.address.toLowerCase()
+        );
+        return {
+          address: knownProvider.address,
+          balanceWei: match?.[1]?.toString() ?? "0",
+        };
+      });
       const match = providers.find(
         ([provider]) => provider.toLowerCase() === providerAddress.toLowerCase()
       );
@@ -155,6 +171,7 @@ async function getHostedWalletState(
     funding: { ...funding, serviceName },
     ledger,
     providerBalanceWei,
+    providerBalances,
   };
 }
 

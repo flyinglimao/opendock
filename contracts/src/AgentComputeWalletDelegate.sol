@@ -11,6 +11,11 @@ interface IZeroGLedgerManager {
 
     function refund(uint256 amount) external;
 
+    function retrieveFund(
+        address[] calldata providers,
+        string calldata serviceName
+    ) external;
+
     function transferFund(
         address provider,
         string calldata serviceName,
@@ -58,6 +63,13 @@ contract AgentComputeWalletDelegate {
         address indexed ledger,
         address indexed recipient,
         uint256 amount
+    );
+
+    event ProviderFundsRetrieved(
+        address indexed caller,
+        address indexed ledger,
+        address indexed provider,
+        string serviceName
     );
 
     event NativeWithdrawn(
@@ -205,6 +217,20 @@ contract AgentComputeWalletDelegate {
         IZeroGLedgerManager(ledger).refund(amount);
         _sendNative(payable(msg.sender), amount);
         emit LedgerRefunded(msg.sender, ledger, msg.sender, amount);
+    }
+
+    function retrieveProviderFund(
+        address ledger,
+        address provider,
+        string calldata serviceName
+    ) external onlyOwner {
+        _requireLedger(ledger);
+        if (provider == address(0)) revert InvalidProvider();
+
+        address[] memory providers = new address[](1);
+        providers[0] = provider;
+        IZeroGLedgerManager(ledger).retrieveFund(providers, serviceName);
+        emit ProviderFundsRetrieved(msg.sender, ledger, provider, serviceName);
     }
 
     function withdrawNative(address payable recipient, uint256 amount)
