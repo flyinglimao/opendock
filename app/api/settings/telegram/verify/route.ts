@@ -100,5 +100,17 @@ export async function POST(req: NextRequest) {
   // Consume the pending token so it can't be reused
   consumeToken(body.token);
 
+  // Notify the user that the connection succeeded and that automations will message here
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: telegramUserId,
+      text: "✅ Your OpenDock account is now connected to Telegram.\n\nWhenever an automation runs, its results will be sent to this chat.",
+    }),
+  }).catch(() => {
+    // Non-fatal — binding already succeeded
+  });
+
   return NextResponse.json({ bound: true, telegramUserId });
 }
