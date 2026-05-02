@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
@@ -22,11 +23,8 @@ export default function TopNavBar() {
   return (
     <header className="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-gray-200 shadow-[0px_4px_20px_rgba(0,0,0,0.05)]">
       <div className="flex items-center justify-between px-6 py-4 max-w-[1280px] mx-auto w-full">
-        <Link
-          href="/"
-          className="text-xl font-bold tracking-tight text-gray-900"
-        >
-          OpenDock
+        <Link href="/" className="flex items-center">
+          <Image src="/logo.svg" alt="OpenDock" width={133} height={40} priority />
         </Link>
 
         <nav className="hidden md:flex items-center gap-6">
