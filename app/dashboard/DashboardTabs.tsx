@@ -687,7 +687,7 @@ export default function DashboardTabs() {
           </div>
           <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-md flex flex-col gap-xs">
             <div className="flex items-center justify-between gap-sm">
-              <span className="text-xs font-semibold text-on-surface-variant">Cloud Wallet</span>
+              <span className="text-xs font-semibold text-on-surface-variant">Platform Wallet</span>
               {cloudState && (
                 <span className="font-data-mono text-[10px] text-outline">
                   {shortAddress(cloudState.wallet.address)}
@@ -866,7 +866,7 @@ export default function DashboardTabs() {
               loading={fundLoading}
             />
             <LedgerTable
-              title="Cloud Wallet"
+              title="Platform Wallet"
               balance={cloudLedgerOg}
               hasLedger={cloudState?.ledger.hasLedger ?? false}
               disabled={!cloudState?.delegate.ready}
@@ -892,7 +892,7 @@ export default function DashboardTabs() {
               disabled={!walletLedger?.hasLedger}
             />
             <ProviderTable
-              title="Cloud Wallet"
+              title="Platform Wallet"
               balances={cloudProviderBalances}
               getAmount={getAmount}
               setAmount={setAmount}
