@@ -48,6 +48,12 @@ interface DashboardAgentsResponse {
   error?: string;
 }
 
+interface AutomationsResponse {
+  automations?: DashboardAutomation[];
+  automation?: DashboardAutomation;
+  error?: string;
+}
+
 interface WalletLedgerState {
   hasLedger: boolean;
   availableBalanceWei: string;
@@ -331,6 +337,9 @@ export default function DashboardTabs() {
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>("agents");
   const [automations, setAutomations] = useState<DashboardAutomation[]>([]);
+  const [automationsLoading, setAutomationsLoading] = useState(false);
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationError, setAutomationError] = useState<string | null>(null);
   const [fundsTab, setFundsTab] = useState<FundsTab>("providers");
   const [walletLedger, setWalletLedger] = useState<WalletLedgerState | null>(null);
   const [cloudState, setCloudState] = useState<HostedComputeWalletState | null>(null);
@@ -435,6 +444,78 @@ export default function DashboardTabs() {
       setAgentsLoading(false);
     }
   }, [address]);
+
+  const refreshAutomations = useCallback(async () => {
+    if (!address) return;
+    setAutomationsLoading(true);
+    setAutomationError(null);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch("/api/automations", {
+        headers: { Authorization: session.bearer },
+        cache: "no-store",
+      });
+      const data = (await res.json().catch(() => null)) as AutomationsResponse | null;
+      if (!res.ok || !data) {
+        throw new Error(data?.error ?? "Failed to load automations");
+      }
+      setAutomations(data.automations ?? []);
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAutomationsLoading(false);
+    }
+  }, [address, getAuthSession]);
+
+  const saveAutomation = useCallback(async ({
+    automationId,
+    tokenId,
+    cronExpression,
+    instruction,
+    enabled,
+  }: {
+    automationId?: string;
+    tokenId?: string;
+    cronExpression: string;
+    instruction: string;
+    enabled: boolean;
+  }) => {
+    if (!address) throw new Error("Wallet not connected");
+    setAutomationSaving(true);
+    setAutomationError(null);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch(
+        automationId ? `/api/automations/${automationId}` : "/api/automations",
+        {
+          method: automationId ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: session.bearer,
+          },
+          body: JSON.stringify({
+            tokenId,
+            cronExpression,
+            instruction,
+            enabled,
+          }),
+        }
+      );
+      const data = (await res.json().catch(() => null)) as AutomationsResponse | null;
+      if (!res.ok || !data?.automation) {
+        throw new Error(data?.error ?? "Failed to save automation");
+      }
+      return data.automation;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setAutomationError(message);
+      throw err;
+    } finally {
+      setAutomationSaving(false);
+    }
+  }, [address, getAuthSession]);
 
   const refreshWalletLedger = useCallback(async () => {
     if (!address || !walletClient) return;
@@ -675,8 +756,9 @@ export default function DashboardTabs() {
     if (!accountReady || !address || authStatus !== "ready") return;
     queueMicrotask(() => {
       void refreshSettings();
+      void refreshAutomations();
     });
-  }, [accountReady, address, authStatus, refreshSettings]);
+  }, [accountReady, address, authStatus, refreshAutomations, refreshSettings]);
 
   useEffect(() => {
     if (!accountReady || !address) {
@@ -717,6 +799,7 @@ export default function DashboardTabs() {
       firstLoadRef.current = false;
       queueMicrotask(() => {
         setAgents({ owned: [], rented: [] });
+        setAutomations([]);
         setWalletLedger(null);
         setCloudState(null);
       });
@@ -1055,9 +1138,14 @@ export default function DashboardTabs() {
         <AutomationTab
           agents={automationAgents}
           agentsLoading={agentsLoading}
+          automationsLoading={automationsLoading}
+          automationSaving={automationSaving}
+          automationError={automationError}
           automations={automations}
           setAutomations={setAutomations}
+          onSaveAutomation={saveAutomation}
           onRefreshAgents={refreshAgents}
+          onRefreshAutomations={refreshAutomations}
         />
       )}
 
@@ -1435,15 +1523,31 @@ export default function DashboardTabs() {
 function AutomationTab({
   agents,
   agentsLoading,
+  automationsLoading,
+  automationSaving,
+  automationError,
   automations,
   setAutomations,
+  onSaveAutomation,
   onRefreshAgents,
+  onRefreshAutomations,
 }: {
   agents: DashboardAgent[];
   agentsLoading: boolean;
+  automationsLoading: boolean;
+  automationSaving: boolean;
+  automationError: string | null;
   automations: DashboardAutomation[];
   setAutomations: Dispatch<SetStateAction<DashboardAutomation[]>>;
+  onSaveAutomation: (input: {
+    automationId?: string;
+    tokenId?: string;
+    cronExpression: string;
+    instruction: string;
+    enabled: boolean;
+  }) => Promise<DashboardAutomation>;
   onRefreshAgents: () => void;
+  onRefreshAutomations: () => void;
 }) {
   const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null);
   const [draftAgent, setDraftAgent] = useState<DashboardAgent | null>(null);
@@ -1500,40 +1604,32 @@ function AutomationTab({
     setDraftAgent(agent);
   };
 
-  const saveAutomation = () => {
+  const saveAutomation = async () => {
     if (!hasSelection || !canSave) return;
-    const now = new Date().toISOString();
     if (selectedAutomation) {
+      const saved = await onSaveAutomation({
+        automationId: selectedAutomation.id,
+        cronExpression: cronInput.trim(),
+        instruction: instructionInput.trim(),
+        enabled: enabledInput,
+      });
       setAutomations((current) =>
         current.map((automation) =>
-          automation.id === selectedAutomation.id
-            ? {
-                ...automation,
-                cronExpression: cronInput.trim(),
-                instruction: instructionInput.trim(),
-                enabled: enabledInput,
-                updatedAt: now,
-              }
-            : automation
+          automation.id === selectedAutomation.id ? saved : automation
         )
       );
       setSavedNotice(true);
       return;
     }
     if (!draftAgent) return;
-    const automation: DashboardAutomation = {
-      id: `local-${Date.now()}`,
+    const saved = await onSaveAutomation({
       tokenId: draftAgent.tokenId,
-      agentName: agentDisplayName(draftAgent),
-      agentImage: draftAgent.image,
       cronExpression: cronInput.trim(),
       instruction: instructionInput.trim(),
       enabled: enabledInput,
-      updatedAt: now,
-      history: [],
-    };
-    setAutomations((current) => [automation, ...current]);
-    setSelectedAutomationId(automation.id);
+    });
+    setAutomations((current) => [saved, ...current]);
+    setSelectedAutomationId(saved.id);
     setDraftAgent(null);
     setSavedNotice(true);
   };
@@ -1561,17 +1657,26 @@ function AutomationTab({
         </div>
         <button
           type="button"
-          onClick={onRefreshAgents}
-          disabled={agentsLoading}
-          title="Refresh agents"
-          aria-label="Refresh agents"
+          onClick={() => {
+            onRefreshAgents();
+            onRefreshAutomations();
+          }}
+          disabled={agentsLoading || automationsLoading}
+          title="Refresh automation data"
+          aria-label="Refresh automation data"
           className="w-10 h-10 rounded-lg border border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:border-primary hover:text-primary disabled:opacity-50 flex items-center justify-center transition-colors"
         >
-          <span className={`material-symbols-outlined ${agentsLoading ? "animate-spin" : ""}`} style={{ fontSize: 20 }}>
+          <span className={`material-symbols-outlined ${agentsLoading || automationsLoading ? "animate-spin" : ""}`} style={{ fontSize: 20 }}>
             refresh
           </span>
         </button>
       </div>
+
+      {automationError && (
+        <div className="rounded-lg border border-error/30 bg-error-container/40 px-md py-sm text-sm text-error">
+          {automationError}
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-[380px_minmax(0,1fr)] gap-lg items-start">
         <aside className="bg-surface-container-lowest border border-outline-variant/40 rounded-xl overflow-hidden">
@@ -1584,7 +1689,13 @@ function AutomationTab({
             </span>
           </div>
           <div className="max-h-[720px] overflow-y-auto">
-            {automations.length === 0 ? (
+            {automationsLoading && automations.length === 0 ? (
+              <div className="p-md flex flex-col gap-sm">
+                {[0, 1, 2].map((item) => (
+                  <div key={item} className="h-20 rounded-lg bg-surface-container animate-pulse" />
+                ))}
+              </div>
+            ) : automations.length === 0 ? (
               <div className="p-lg text-sm text-outline">
                 No automations yet.
               </div>
@@ -1771,18 +1882,18 @@ function AutomationTab({
                     <button
                       type="button"
                       onClick={resetForm}
-                      disabled={!isDirty}
+                      disabled={!isDirty || automationSaving}
                       className="rounded-full border border-outline-variant px-md py-sm text-sm font-semibold text-on-surface disabled:opacity-50"
                     >
                       Reset
                     </button>
                     <button
                       type="button"
-                      onClick={saveAutomation}
-                      disabled={!canSave}
+                      onClick={() => void saveAutomation()}
+                      disabled={!canSave || automationSaving}
                       className="rounded-full bg-primary text-on-primary px-lg py-sm text-sm font-semibold disabled:opacity-50"
                     >
-                      Save
+                      {automationSaving ? "Saving..." : "Save"}
                     </button>
                   </div>
                 </div>

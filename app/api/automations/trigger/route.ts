@@ -369,10 +369,7 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
   const hostedHeaders = await hostedBroker.inference.getRequestHeaders(
     DEFAULT_PROVIDER_ADDRESS
   );
-  const instruction = [
-    `Automation scheduled for ${run.scheduledFor.toISOString()}.`,
-    run.instruction,
-  ].join("\n\n");
+  const instruction = run.instruction;
   const result = await runAgentLoop(
     endpoint,
     model,
@@ -428,7 +425,7 @@ async function executeClaimedRun(run: ClaimedRun): Promise<{
   if (userSetting?.telegramUserId) {
     await sendTelegramMessage(
       userSetting.telegramUserId,
-      `OpenDock Automation: ${run.agentName}\n${summary}\n\n${result.content}`
+      `OpenDock Automation: ${run.agentName}\n\n${result.content || summary}`
     );
   }
 
