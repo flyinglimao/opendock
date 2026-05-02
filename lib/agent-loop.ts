@@ -6,8 +6,7 @@ import {
   createZGComputeNetworkBroker,
   createZGComputeNetworkReadOnlyBroker,
 } from "@0glabs/0g-serving-broker";
-import { KB_TOOLS, executeKBTool, type KBFile } from "@/lib/kb-tools";
-import { WEB_SEARCH_TOOL, executeBraveSearch } from "@/lib/web-search";
+import { buildTools, executeTool, type KBFile, type ToolContext } from "@/lib/tools";
 
 export type { KBFile };
 
@@ -95,10 +94,8 @@ export async function runAgentLoop(
   providerAddress: string,
   braveApiKey: string | null
 ): Promise<LoopResult> {
-  const tools = [
-    ...(kbFiles.length > 0 ? [...KB_TOOLS] : []),
-    WEB_SEARCH_TOOL,
-  ];
+  const tools = buildTools(kbFiles);
+  const toolCtx: ToolContext = { kbFiles, braveApiKey };
 
   const toolInstructions = buildToolInstructions(kbFiles.length > 0);
 
@@ -196,28 +193,14 @@ export async function runAgentLoop(
     });
 
     for (const toolCall of message.tool_calls) {
-      let toolArgs: Record<string, string> = {};
+      let toolArgs: Record<string, unknown> = {};
       try {
-        toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, string>;
+        toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
       } catch {
         // ignore parse errors; handlers deal with missing args gracefully
       }
 
-      let result: string;
-      if (toolCall.function.name === "web_search") {
-        if (braveApiKey) {
-          result = await executeBraveSearch(toolArgs.query ?? "", braveApiKey);
-        } else {
-          result = JSON.stringify({
-            error:
-              "Web search is not configured. Please ask the user to add their" +
-              " Brave Search API key in the OpenDock Dashboard (Settings section)" +
-              " to enable this feature.",
-          });
-        }
-      } else {
-        result = executeKBTool(toolCall.function.name, toolArgs, kbFiles);
-      }
+      const result = await executeTool(toolCall.function.name, toolArgs, toolCtx);
       internalMessages.push({
         role: "tool",
         tool_call_id: toolCall.id,

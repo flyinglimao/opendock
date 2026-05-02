@@ -1,7 +1,3 @@
-// lib/kb-tools.ts
-// Knowledge base tool definitions and server-side execution for the agent loop.
-// Agents call these instead of having the full KB embedded in the system prompt.
-
 export interface KBFile {
   name: string;
   content: string;

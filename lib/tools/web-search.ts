@@ -1,7 +1,3 @@
-// lib/web-search.ts
-// Brave Search API integration for the agent web search tool.
-// The Brave API key is stored per-user in the database (UserSetting.braveApiKey).
-
 export const WEB_SEARCH_TOOL = {
   type: "function" as const,
   function: {
@@ -38,10 +34,6 @@ interface BraveSearchResponse {
 
 const BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 
-/**
- * Execute a Brave web search and return a formatted string of results.
- * Returns an error string if the key is missing or the API fails.
- */
 export async function executeBraveSearch(
   query: string,
   apiKey: string

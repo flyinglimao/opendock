@@ -6,7 +6,7 @@
 // It is not equivalent to TEE because the server can decrypt plaintext.
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import type { KBFile } from "@/lib/kb-tools";
+import type { KBFile } from "@/lib/tools";
 
 export interface EncryptedAgentPayload {
   version: 1;

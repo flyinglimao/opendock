@@ -13,7 +13,7 @@ import {
   type EncryptedAgentPayload,
 } from "@/lib/encryption";
 import { findNextCronOccurrence } from "@/lib/cron";
-import { getKBFiles } from "@/lib/kb-tools";
+import { getKBFiles } from "@/lib/tools";
 import { getServiceMetadata, runAgentLoop } from "@/lib/agent-loop";
 
 export const dynamic = "force-dynamic";

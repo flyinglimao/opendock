@@ -21,7 +21,7 @@ import {
   decryptAgentIntelligence,
   type EncryptedAgentPayload,
 } from "@/lib/encryption";
-import { getKBFiles } from "@/lib/kb-tools";
+import { getKBFiles } from "@/lib/tools";
 import {
   getServiceMetadata,
   runAgentLoop,
