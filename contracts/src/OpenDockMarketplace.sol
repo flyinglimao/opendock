@@ -123,9 +123,10 @@ contract OpenDockMarketplace is
         // Active rentals
         mapping(uint256 => ActiveRental) activeRentals;
         uint256 nextRentalId;
-        // tokenId active rental ids (for checking if a token already has an active rental)
-        mapping(address nftContract => mapping(uint256 tokenId => uint256 rentalId))
-            tokenActiveRental; // rentalId=0 means none (rentals start at 1)
+        // Count of active (non-revoked, non-expired) rentals per token.
+        // Multiple renters can hold the same token simultaneously.
+        mapping(address nftContract => mapping(uint256 tokenId => uint256 count))
+            tokenActiveRentalCount;
         // Protocol fee in basis points (e.g. 250 = 2.5%)
         uint256 feeBps;
         address feeRecipient;
@@ -387,16 +388,10 @@ contract OpenDockMarketplace is
         require(order.owner == msg.sender, "Not owner");
         require(order.status == OrderStatus.Active, "Order not active");
 
-        // Ensure no active rental still running for this order
-        uint256 rentalId = $.tokenActiveRental[order.nftContract][order.tokenId];
-        if (rentalId != 0) {
-            ActiveRental storage rental = $.activeRentals[rentalId];
-            require(
-                rental.revoked ||
-                    block.timestamp >= rental.startTime + rental.duration,
-                "Active rental exists"
-            );
-        }
+        require(
+            $.tokenActiveRentalCount[order.nftContract][order.tokenId] == 0,
+            "Active rental exists"
+        );
 
         order.status = OrderStatus.Cancelled;
         emit RentOrderCancelled(orderId);
@@ -424,17 +419,6 @@ contract OpenDockMarketplace is
         uint256 totalPrice = order.pricePerSecond * duration;
         require(msg.value >= totalPrice, "Insufficient payment");
 
-        // Ensure no overlapping active rental for this token
-        uint256 existingRentalId = $.tokenActiveRental[order.nftContract][order.tokenId];
-        if (existingRentalId != 0) {
-            ActiveRental storage existing = $.activeRentals[existingRentalId];
-            require(
-                existing.revoked ||
-                    block.timestamp >= existing.startTime + existing.duration,
-                "Token already rented"
-            );
-        }
-
         address renter = msg.sender;
 
         // Authorize the renter for usage via the marketplace's usage-operator role
@@ -451,7 +435,7 @@ contract OpenDockMarketplace is
             duration: duration,
             revoked: false
         });
-        $.tokenActiveRental[order.nftContract][order.tokenId] = rentalId;
+        $.tokenActiveRentalCount[order.nftContract][order.tokenId] += 1;
 
         // Distribute payment
         uint256 fee = (totalPrice * $.feeBps) / 10_000;
@@ -482,6 +466,7 @@ contract OpenDockMarketplace is
         );
 
         rental.revoked = true;
+        $.tokenActiveRentalCount[rental.nftContract][rental.tokenId] -= 1;
 
         // Revoke usage authorization via the marketplace's usage-operator role
         IOpenDockINFT(rental.nftContract).revokeAuthorization(
@@ -532,16 +517,12 @@ contract OpenDockMarketplace is
         return ($.feeBps, $.feeRecipient);
     }
 
-    /// @notice True if the token is currently rented and the rental has not expired
+    /// @notice True if the token has at least one active (non-expired) rental
     function isActivelyRented(
         address nftContract,
         uint256 tokenId
     ) external view returns (bool) {
-        MarketplaceStorage storage $ = _getStorage();
-        uint256 rentalId = $.tokenActiveRental[nftContract][tokenId];
-        if (rentalId == 0) return false;
-        ActiveRental storage rental = $.activeRentals[rentalId];
-        return !rental.revoked && block.timestamp < rental.startTime + rental.duration;
+        return _getStorage().tokenActiveRentalCount[nftContract][tokenId] > 0;
     }
 
     uint256[50] private __gap;

@@ -7,7 +7,10 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "expire-rentals": "curl -sf -X POST http://localhost:3000/api/admin/expire-rentals | jq ."
+    "expire-rentals": "curl -sf -X POST http://localhost:3000/api/admin/expire-rentals | jq .",
+    "contracts:verify": "cd contracts && bash script/verify.sh",
+    "contracts:deploy-marketplace": "cd contracts && forge script script/DeployMarketplace.s.sol --rpc-url https://evmrpc-testnet.0g.ai --broadcast --private-key $PRIVATE_KEY -vvvv",
+    "contracts:authorize-marketplace": "cd contracts && forge script script/AuthorizeMarketplace.s.sol --rpc-url https://evmrpc-testnet.0g.ai --broadcast --private-key $PRIVATE_KEY -vvvv"
   },
   "dependencies": {
     "@0gfoundation/0g-ts-sdk": "^1.2.6",

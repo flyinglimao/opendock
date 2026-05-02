@@ -7,15 +7,9 @@ import {
   createPublicClient,
   getAddress,
   http,
-  parseAbiItem,
 } from "viem";
 import { zgTestnet } from "@/lib/chain";
-import {
-  INFT_ADDRESS,
-  INFT_ABI,
-  MARKETPLACE_ABI,
-  MARKETPLACE_ADDRESS,
-} from "@/lib/contracts";
+import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 
 const publicClient = createPublicClient({
   chain: zgTestnet,
@@ -27,14 +21,6 @@ const publicClient = createPublicClient({
 });
 
 const AUTH_WINDOW_MS = 30 * 60 * 1000; // 30-minute signature window
-const RENTAL_LOG_FROM_BLOCK = BigInt(
-  process.env.MARKETPLACE_RENTAL_FROM_BLOCK ??
-    process.env.NEXT_PUBLIC_MARKETPLACE_RENTAL_FROM_BLOCK ??
-    "0"
-);
-const RENTAL_STARTED_EVENT = parseAbiItem(
-  "event RentalStarted(uint256 indexed rentalId,uint256 indexed rentOrderId,address indexed renter,uint256 tokenId,uint256 duration)"
-);
 
 export interface AuthPayload {
   address: string;
@@ -91,57 +77,25 @@ export async function verifyAuthHeader(
   }
 }
 
-function hasMarketplace(): boolean {
-  return Boolean(MARKETPLACE_ADDRESS && MARKETPLACE_ADDRESS !== "0x");
-}
 
 export async function hasActiveRentalAccess(
   tokenId: string,
   address: string
 ): Promise<boolean> {
-  if (!hasMarketplace()) return false;
-
   try {
-    const normalizedAddress = getAddress(address);
-    const logs = await publicClient.getLogs({
-      address: MARKETPLACE_ADDRESS,
-      event: RENTAL_STARTED_EVENT,
-      args: { renter: normalizedAddress },
-      fromBlock: RENTAL_LOG_FROM_BLOCK,
-      toBlock: "latest",
+    const authorizedUsers = await publicClient.readContract({
+      address: INFT_ADDRESS,
+      abi: INFT_ABI,
+      functionName: "authorizedUsersOf",
+      args: [BigInt(tokenId)],
     });
-
-    const tokenIdBigInt = BigInt(tokenId);
-    const matchingLogs = [...logs]
-      .filter((log) => log.args.tokenId === tokenIdBigInt)
-      .reverse();
-
-    for (const log of matchingLogs) {
-      const rentalId = log.args.rentalId;
-      if (rentalId === undefined) continue;
-      const rental = await publicClient.readContract({
-        address: MARKETPLACE_ADDRESS,
-        abi: MARKETPLACE_ABI,
-        functionName: "getActiveRental",
-        args: [rentalId],
-      });
-
-      const isSameToken =
-        rental.nftContract.toLowerCase() === INFT_ADDRESS.toLowerCase() &&
-        rental.tokenId === tokenIdBigInt;
-      const isSameRenter =
-        rental.renter.toLowerCase() === normalizedAddress.toLowerCase();
-      const expiresAt = rental.startTime + rental.duration;
-      const isActive =
-        !rental.revoked && BigInt(Math.floor(Date.now() / 1000)) < expiresAt;
-
-      if (isSameToken && isSameRenter && isActive) return true;
-    }
+    const normalized = getAddress(address).toLowerCase();
+    return (authorizedUsers as string[]).some(
+      (u) => u.toLowerCase() === normalized
+    );
   } catch {
     return false;
   }
-
-  return false;
 }
 
 /** Check on-chain whether `address` owns `tokenId` or has an active rental. */
