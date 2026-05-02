@@ -13,6 +13,7 @@ import { BrowserProvider, JsonRpcSigner } from "ethers";
 import { decodeEventLog } from "viem";
 import { uploadMetadata, uploadAgentData, uploadImage } from "@/lib/0g-storage";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
+import PreviewChatPanel from "./PreviewChatPanel";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_BASE_URL ?? "https://opendock.vercel.app";
@@ -411,13 +412,25 @@ export default function CreateAgentForm() {
   ].includes(step.id);
 
   return (
-    <form
-      className="flex flex-col gap-gutter"
-      onSubmit={(e) => {
-        e.preventDefault();
-        handleDeploy();
-      }}
-    >
+    <div className="flex flex-col lg:flex-row items-start gap-gutter w-full">
+      {/* ---- Left column: form card ---- */}
+      <div className="flex-1 min-w-0">
+        <div className="bg-surface-container-lowest rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.05)] hover:shadow-[0px_10px_30px_rgba(0,0,0,0.08)] transition-shadow duration-300 w-full p-lg md:p-10 flex flex-col">
+          <header className="mb-xl text-center">
+            <h1 className="font-h1 text-h1 font-bold text-on-surface mb-sm">
+              Deploy New Agent
+            </h1>
+            <p className="font-body-sub text-body-sub text-on-surface-variant">
+              Configure the parameters and knowledge base for your decentralized AI agent.
+            </p>
+          </header>
+          <form
+            className="flex flex-col gap-gutter"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleDeploy();
+            }}
+          >
       {/* Step indicator */}
       {step.id !== "idle" && step.id !== "error" && (
         <StepIndicator step={step} />
@@ -739,6 +752,24 @@ export default function CreateAgentForm() {
           </div>
         </>
       )}
-    </form>
+          </form>
+        </div>
+      </div>
+
+      {/* ---- Right column: sticky chat panel ---- */}
+      <div className="w-full lg:w-[480px] lg:flex-shrink-0 lg:sticky lg:top-6 self-start">
+        <div className="bg-surface-container-lowest rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.05)] flex flex-col gap-sm overflow-hidden">
+          <div className="flex items-center justify-between px-lg pt-lg">
+            <span className="font-label-caps text-label-caps font-semibold text-on-surface">
+              Test Agent
+            </span>
+            <span className="font-body-sub text-body-sub text-outline text-xs">
+              Preview before deploying
+            </span>
+          </div>
+          <PreviewChatPanel systemPrompt={systemPrompt} kbFiles={kbFiles} />
+        </div>
+      </div>
+    </div>
   );
 }
