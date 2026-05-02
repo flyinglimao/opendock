@@ -77,6 +77,25 @@ export async function verifyAuthHeader(
   }
 }
 
+export async function verifySessionAuthHeader(
+  authHeader: string | null
+): Promise<string | null> {
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  try {
+    const raw = Buffer.from(authHeader.slice(7), "base64").toString("utf8");
+    const { address, timestamp, signature } = JSON.parse(raw) as AuthPayload;
+    if (Math.abs(Date.now() - timestamp) > AUTH_WINDOW_MS) return null;
+    const recovered = await recoverMessageAddress({
+      message: buildSessionAuthMessage(timestamp),
+      signature: signature as `0x${string}`,
+    });
+    if (recovered.toLowerCase() !== address.toLowerCase()) return null;
+    return address;
+  } catch {
+    return null;
+  }
+}
+
 
 export async function hasActiveRentalAccess(
   tokenId: string,

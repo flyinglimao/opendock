@@ -7,6 +7,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 const navLinks = [
   { href: "/", label: "Explore" },
   { href: "/create", label: "Create" },
+  { href: "/chat", label: "Chat" },
   { href: "/dashboard", label: "Dashboard" },
 ];
 
