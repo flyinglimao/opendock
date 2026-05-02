@@ -180,6 +180,28 @@ export const MARKETPLACE_ABI = [
     ],
     outputs: [{ name: "", type: "bool" }],
   },
+  // getActiveRental(uint256 rentalId) returns (ActiveRental)
+  {
+    name: "getActiveRental",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "rentalId", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "renter", type: "address" },
+          { name: "nftContract", type: "address" },
+          { name: "tokenId", type: "uint256" },
+          { name: "rentOrderId", type: "uint256" },
+          { name: "startTime", type: "uint256" },
+          { name: "duration", type: "uint256" },
+          { name: "revoked", type: "bool" },
+        ],
+      },
+    ],
+  },
   // withdraw()
   {
     name: "withdraw",
@@ -199,6 +221,18 @@ export const MARKETPLACE_ABI = [
       { name: "tokenId", type: "uint256", indexed: false },
       { name: "pricePerSecond", type: "uint256", indexed: false },
       { name: "maxDuration", type: "uint256", indexed: false },
+    ],
+  },
+  // RentalStarted event
+  {
+    name: "RentalStarted",
+    type: "event",
+    inputs: [
+      { name: "rentalId", type: "uint256", indexed: true },
+      { name: "rentOrderId", type: "uint256", indexed: true },
+      { name: "renter", type: "address", indexed: true },
+      { name: "tokenId", type: "uint256", indexed: false },
+      { name: "duration", type: "uint256", indexed: false },
     ],
   },
 ] as const;

@@ -8,6 +8,7 @@ import {
   MARKETPLACE_ABI,
   MARKETPLACE_ADDRESS,
 } from "@/lib/contracts";
+import { hasActiveRentalAccess } from "@/lib/auth";
 
 const publicClient = createPublicClient({
   chain: zgTestnet,
@@ -36,19 +37,13 @@ async function classifyAgent(
   account: string
 ): Promise<{ owned: DashboardAgent | null; rented: DashboardAgent | null }> {
   try {
-    const [owner, authorizedUsers, activeRental] = await Promise.all([
+    const [owner, activeRental, hasActiveRental] = await Promise.all([
       publicClient.readContract({
         address: INFT_ADDRESS,
         abi: INFT_ABI,
         functionName: "ownerOf",
         args: [BigInt(token.tokenId)],
       }) as Promise<string>,
-      publicClient.readContract({
-        address: INFT_ADDRESS,
-        abi: INFT_ABI,
-        functionName: "authorizedUsersOf",
-        args: [BigInt(token.tokenId)],
-      }) as Promise<string[]>,
       MARKETPLACE_ADDRESS && MARKETPLACE_ADDRESS !== "0x"
         ? (publicClient.readContract({
             address: MARKETPLACE_ADDRESS,
@@ -57,16 +52,14 @@ async function classifyAgent(
             args: [INFT_ADDRESS, BigInt(token.tokenId)],
           }) as Promise<boolean>)
         : Promise.resolve(false),
+      hasActiveRentalAccess(token.tokenId, account),
     ]);
     const normalizedOwner = getAddress(owner);
     const isOwned = normalizedOwner.toLowerCase() === account.toLowerCase();
-    const isAuthorized = authorizedUsers.some(
-      (user) => user.toLowerCase() === account.toLowerCase()
-    );
     const item = { ...token, owner: normalizedOwner, activeRental };
     return {
       owned: isOwned ? item : null,
-      rented: !isOwned && isAuthorized ? item : null,
+      rented: !isOwned && hasActiveRental ? item : null,
     };
   } catch {
     const owner = token.owner ? getAddress(token.owner) : null;

@@ -10,6 +10,7 @@ import { createPublicClient, http } from "viem";
 import { zgTestnet } from "@/lib/chain";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
+import { hasActiveRentalAccess } from "@/lib/auth";
 
 const publicClient = createPublicClient({ chain: zgTestnet, transport: http() });
 
@@ -29,23 +30,15 @@ export async function GET(
 
   if (address) {
     try {
-      const [owner, authorizedUsers] = await Promise.all([
-        publicClient.readContract({
-          address: INFT_ADDRESS,
-          abi: INFT_ABI,
-          functionName: "ownerOf",
-          args: [BigInt(id)],
-        }) as Promise<string>,
-        publicClient.readContract({
-          address: INFT_ADDRESS,
-          abi: INFT_ABI,
-          functionName: "authorizedUsersOf",
-          args: [BigInt(id)],
-        }) as Promise<string[]>,
-      ]);
+      const owner = (await publicClient.readContract({
+        address: INFT_ADDRESS,
+        abi: INFT_ABI,
+        functionName: "ownerOf",
+        args: [BigInt(id)],
+      })) as string;
       const addr = address.toLowerCase();
       isOwner = owner.toLowerCase() === addr;
-      isAuthorized = isOwner || authorizedUsers.some((u) => u.toLowerCase() === addr);
+      isAuthorized = isOwner || (await hasActiveRentalAccess(id, address));
     } catch {
       // Token not found on chain — treat as unauthorized
     }
