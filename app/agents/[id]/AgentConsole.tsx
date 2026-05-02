@@ -268,8 +268,7 @@ function LedgerPanel({
       ) : (
         <>
           <p className="font-body-sub text-body-sub text-amber-600 text-xs">
-            Fund this provider sub-account to send queries (min 1 OG). Each query costs ~0.0000001 OG.
-            {mode === "hosted" ? " Your wallet sends a normal tx to the hosted wallet contract; no hosted-wallet gas top-up is needed." : ""}
+            Fund this provider sub-account to send queries (min 1 OG).
           </p>
           <div className="flex gap-sm items-center flex-wrap">
             <div className="flex gap-sm items-center">
@@ -542,15 +541,18 @@ function OwnerRentalPanel({
 function RentPaymentPanel({
   rentOrder,
   onRented,
+  accessLoading,
 }: {
   rentOrder: RentOrder;
   onRented: () => void;
+  accessLoading: boolean;
 }) {
   const { writeContractAsync } = useWriteContract();
   const [hours, setHours] = useState("1");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingTx, setPendingTx] = useState<`0x${string}` | undefined>();
+  const [txConfirmed, setTxConfirmed] = useState(false);
 
   const { data: receipt } = useWaitForTransactionReceipt({
     hash: pendingTx,
@@ -564,6 +566,7 @@ function RentPaymentPanel({
     queueMicrotask(() => {
       setLoading(false);
       setPendingTx(undefined);
+      setTxConfirmed(true);
       onRented();
     });
   }, [receipt, onRented]);
@@ -653,13 +656,30 @@ function RentPaymentPanel({
             {(Number(totalWei) / 1e18).toFixed(6)} OG
           </span>
         </div>
-        <button
-          onClick={handleRent} disabled={loading || !hours || parseFloat(hours) <= 0}
-          className="bg-primary text-on-primary font-label-caps text-label-caps font-semibold py-md px-xl rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-40 flex items-center justify-center gap-sm"
-        >
-          {loading && <span className="inline-block w-4 h-4 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin" />}
-          {pendingTx ? "Confirming…" : "Rent Access"}
-        </button>
+        {txConfirmed ? (
+          <div className="flex flex-col items-center gap-sm">
+            <div className="flex items-center gap-sm text-on-surface-variant">
+              {accessLoading
+                ? <><span className="inline-block w-4 h-4 border-2 border-outline/30 border-t-outline rounded-full animate-spin" /><span className="text-sm">Verifying access…</span></>
+                : <><span className="material-symbols-outlined text-sm">check_circle</span><span className="text-sm">Transaction confirmed</span></>
+              }
+            </div>
+            <button
+              onClick={onRented} disabled={accessLoading}
+              className="text-sm text-primary underline underline-offset-2 hover:opacity-70 disabled:opacity-40 transition-opacity"
+            >
+              {accessLoading ? "Checking…" : "Re-check access"}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={handleRent} disabled={loading || !hours || parseFloat(hours) <= 0}
+            className="bg-primary text-on-primary font-label-caps text-label-caps font-semibold py-md px-xl rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-40 flex items-center justify-center gap-sm"
+          >
+            {loading && <span className="inline-block w-4 h-4 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin" />}
+            {pendingTx ? "Confirming…" : "Rent Access"}
+          </button>
+        )}
       </div>
       {error && <p className="text-xs text-error break-all text-center max-w-xs">{error}</p>}
     </div>
@@ -1034,6 +1054,7 @@ export default function AgentConsole({ tokenId, agentName }: Props) {
       <div className="flex flex-col gap-lg">
         <RentPaymentPanel
           rentOrder={rentOrder}
+          accessLoading={accessLoading}
           onRented={() => {
             void refreshAccess();
           }}

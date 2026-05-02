@@ -354,7 +354,7 @@ export default function DashboardTabs() {
       setError(
         err instanceof Error
           ? err.message
-          : "Sign in is required to load your cloud wallet"
+          : "Sign in is required to load your platform wallet"
       );
       return null;
     }
@@ -434,7 +434,7 @@ export default function DashboardTabs() {
         { cache: "no-store" }
       );
       const data = (await res.json().catch(() => null)) as HostedComputeWalletState | null;
-      if (!res.ok || !data) throw new Error(data?.error ?? "Cloud wallet unavailable");
+      if (!res.ok || !data) throw new Error(data?.error ?? "Platform wallet unavailable");
       setCloudState(data);
     } catch (err) {
       setCloudState(null);
@@ -523,13 +523,13 @@ export default function DashboardTabs() {
   const setupCloudWallet = useCallback(async () => {
     await withAction("cloud-setup", async () => {
       const session = await getAuthSession();
-      if (!session) throw new Error("Sign in is required to enable the cloud wallet");
+      if (!session) throw new Error("Sign in is required to enable the platform wallet");
       const res = await fetch("/api/wallet/compute-wallet/setup", {
         method: "POST",
         headers: { Authorization: session.bearer },
       });
       const data = (await res.json().catch(() => null)) as HostedComputeWalletState | null;
-      if (!res.ok || !data) throw new Error(data?.error ?? "Cloud wallet setup failed");
+      if (!res.ok || !data) throw new Error(data?.error ?? "Platform wallet setup failed");
       setCloudState(data);
     });
   }, [getAuthSession, withAction]);
@@ -570,7 +570,7 @@ export default function DashboardTabs() {
 
   const getCloudDelegate = useCallback(async () => {
     if (!cloudState?.delegate.ready || !cloudState.wallet.address || !cloudState.funding) {
-      throw new Error("Enable the cloud wallet first");
+      throw new Error("Enable the platform wallet first");
     }
     const signer = await getSigner();
     return new Contract(cloudState.wallet.address, DELEGATE_ABI, signer);
@@ -578,7 +578,7 @@ export default function DashboardTabs() {
 
   const cloudDepositLedger = useCallback(async () => {
     await withAction("cloud-ledger-deposit", async () => {
-      if (!cloudState?.funding) throw new Error("Cloud wallet is not ready");
+      if (!cloudState?.funding) throw new Error("Platform wallet is not ready");
       const delegate = await getCloudDelegate();
       const amount = Number(getAmount("cloud-ledger-deposit", cloudState.ledger.hasLedger ? "1" : "3"));
       const value = parseEther(String(amount));
@@ -591,7 +591,7 @@ export default function DashboardTabs() {
 
   const cloudWithdrawLedger = useCallback(async () => {
     await withAction("cloud-ledger-withdraw", async () => {
-      if (!cloudState?.funding) throw new Error("Cloud wallet is not ready");
+      if (!cloudState?.funding) throw new Error("Platform wallet is not ready");
       const delegate = await getCloudDelegate();
       const tx = await delegate.refundLedgerToOwner(
         cloudState.funding.ledgerAddress,
@@ -603,7 +603,7 @@ export default function DashboardTabs() {
 
   const cloudFundProvider = useCallback(async (providerAddress: string) => {
     await withAction(`cloud-provider-fund-${providerAddress}`, async () => {
-      if (!cloudState?.funding) throw new Error("Cloud wallet is not ready");
+      if (!cloudState?.funding) throw new Error("Platform wallet is not ready");
       const delegate = await getCloudDelegate();
       const tx = await delegate.fundProvider(
         cloudState.funding.ledgerAddress,
@@ -617,7 +617,7 @@ export default function DashboardTabs() {
 
   const cloudWithdrawProvider = useCallback(async (providerAddress: string) => {
     await withAction(`cloud-provider-withdraw-${providerAddress}`, async () => {
-      if (!cloudState?.funding) throw new Error("Cloud wallet is not ready");
+      if (!cloudState?.funding) throw new Error("Platform wallet is not ready");
       const delegate = await getCloudDelegate();
       const tx = await delegate.retrieveProviderFund(
         cloudState.funding.ledgerAddress,
@@ -808,7 +808,7 @@ export default function DashboardTabs() {
           <div>
             <h2 className="font-h2 text-h2 font-semibold text-on-surface">Compute Funds</h2>
             <p className="text-sm text-on-surface-variant">
-              Manage your wallet ledger and the selected agent cloud wallet.
+              Manage your wallet ledger and the selected agent platform wallet.
             </p>
           </div>
           <div className="flex items-center gap-sm">
