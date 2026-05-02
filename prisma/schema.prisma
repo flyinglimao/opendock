@@ -89,7 +89,8 @@ model AgentConversationMessage {
 model UserSetting {
   userAddress String @id  // checksummed/lowercased wallet address
 
-  braveApiKey String?     // Brave Search API key for web search tool
+  braveApiKey    String?  // Brave Search API key for web search tool
+  telegramUserId String?  // Bound Telegram user ID (numeric string)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

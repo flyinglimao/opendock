@@ -15,6 +15,8 @@ type AuthSessionStatus = "checking" | "ready" | "needed" | "signing";
 interface UserSettings {
   hasBraveApiKey: boolean;
   braveApiKey: string | null;
+  hasTelegramBinding: boolean;
+  telegramUserId: string | null;
 }
 
 interface DashboardAgent {
@@ -310,6 +312,14 @@ export default function DashboardTabs() {
   const [braveKeyInput, setBraveKeyInput] = useState("");
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [telegramToken, setTelegramToken] = useState<string | null>(null);
+  const [telegramTokenExpiresAt, setTelegramTokenExpiresAt] = useState<number | null>(null);
+  const [telegramTokenLoading, setTelegramTokenLoading] = useState(false);
+  const [telegramVerifyLoading, setTelegramVerifyLoading] = useState(false);
+  const [telegramVerifyResult, setTelegramVerifyResult] = useState<"success" | "pending" | null>(null);
+  const [telegramCopied, setTelegramCopied] = useState(false);
+  const [telegramUnbindLoading, setTelegramUnbindLoading] = useState(false);
+  const [telegramError, setTelegramError] = useState<string | null>(null);
   const accountReady = hydrated && Boolean(address);
   const walletChecking =
     !hydrated ||
@@ -530,6 +540,102 @@ export default function DashboardTabs() {
       setSettingsLoading(false);
     }
   }, [address, getAuthSession, refreshSettings]);
+
+  const generateTelegramToken = useCallback(async () => {
+    if (!address) return;
+    setTelegramTokenLoading(true);
+    setTelegramVerifyResult(null);
+    setTelegramToken(null);
+    setTelegramError(null);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch("/api/settings/telegram/token", {
+        method: "POST",
+        headers: { Authorization: session.bearer },
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Failed to generate token");
+      }
+      const data = (await res.json()) as { token: string; expiresAt: number };
+      setTelegramToken(data.token);
+      setTelegramTokenExpiresAt(data.expiresAt);
+    } catch (err) {
+      setTelegramError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTelegramTokenLoading(false);
+    }
+  }, [address, getAuthSession]);
+
+  const verifyTelegramToken = useCallback(async () => {
+    if (!address || !telegramToken) return;
+    setTelegramVerifyLoading(true);
+    setTelegramError(null);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch("/api/settings/telegram/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session.bearer,
+        },
+        body: JSON.stringify({ token: telegramToken }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Verification failed");
+      }
+      const data = (await res.json()) as { bound: boolean };
+      if (data.bound) {
+        setTelegramVerifyResult("success");
+        setTelegramToken(null);
+        setTelegramTokenExpiresAt(null);
+        await refreshSettings();
+      } else {
+        setTelegramVerifyResult("pending");
+      }
+    } catch (err) {
+      setTelegramError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTelegramVerifyLoading(false);
+    }
+  }, [address, getAuthSession, refreshSettings, telegramToken]);
+
+  const unbindTelegram = useCallback(async () => {
+    if (!address) return;
+    setTelegramUnbindLoading(true);
+    setTelegramError(null);
+    try {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required");
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: session.bearer,
+        },
+        body: JSON.stringify({ telegramUserId: null }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Failed to unbind");
+      }
+      await refreshSettings();
+    } catch (err) {
+      setTelegramError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTelegramUnbindLoading(false);
+    }
+  }, [address, getAuthSession, refreshSettings]);
+
+  const copyTelegramCommand = useCallback(() => {
+    if (!telegramToken) return;
+    void navigator.clipboard.writeText(`/register ${telegramToken}`);
+    setTelegramCopied(true);
+    setTimeout(() => setTelegramCopied(false), 2000);
+  }, [telegramToken]);
 
   useEffect(() => {
     if (!accountReady || !address || firstLoadRef.current) return;
@@ -1008,6 +1114,7 @@ export default function DashboardTabs() {
           </p>
         </div>
 
+        {/* Web Search */}
         <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest overflow-hidden">
           <div className="px-md py-sm border-b border-outline-variant/30 flex items-center justify-between">
             <div className="flex items-center gap-sm">
@@ -1099,6 +1206,170 @@ export default function DashboardTabs() {
                 </button>
                 {" "}to manage settings.
               </p>
+            )}
+          </div>
+        </div>
+
+        {/* Telegram */}
+        <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest overflow-hidden">
+          <div className="px-md py-sm border-b border-outline-variant/30 flex items-center justify-between">
+            <div className="flex items-center gap-sm">
+              {/* Telegram send icon via material-symbols */}
+              <span className="material-symbols-outlined text-on-surface" style={{ fontSize: 18 }}>send</span>
+              <h3 className="font-semibold text-on-surface">Telegram</h3>
+            </div>
+            {userSettings?.hasTelegramBinding ? (
+              <span className="inline-flex items-center gap-xs rounded-full bg-green-50 border border-green-200 px-sm py-0.5 text-[11px] font-semibold text-green-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                Bound
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-xs rounded-full bg-surface-container-high border border-outline-variant px-sm py-0.5 text-[11px] font-semibold text-outline">
+                <span className="w-1.5 h-1.5 rounded-full bg-outline/40 inline-block" />
+                Not bound
+              </span>
+            )}
+          </div>
+
+          <div className="p-md flex flex-col gap-md">
+            {userSettings?.hasTelegramBinding ? (
+              /* Already bound */
+              <>
+                <div className="flex items-center gap-sm rounded-md border border-outline-variant/40 bg-surface-container-low px-md py-sm">
+                  <span className="material-symbols-outlined text-outline" style={{ fontSize: 16 }}>link</span>
+                  <span className="font-data-mono text-sm text-on-surface-variant flex-1">
+                    User ID: {userSettings.telegramUserId}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={unbindTelegram}
+                    disabled={telegramUnbindLoading}
+                    className="text-xs font-semibold text-error hover:underline disabled:opacity-50"
+                  >
+                    {telegramUnbindLoading ? "Unbinding…" : "Unbind"}
+                  </button>
+                </div>
+                <p className="text-sm text-on-surface-variant">
+                  Your Telegram account is linked. Agents can send you notifications via{" "}
+                  <a
+                    href="https://t.me/opendock_bot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline underline-offset-2 hover:text-primary/80"
+                  >
+                    @opendock_bot
+                  </a>.
+                </p>
+                {telegramError && (
+                  <p className="text-xs text-error">{telegramError}</p>
+                )}
+              </>
+            ) : (
+              /* Not yet bound */
+              <>
+                <p className="text-sm text-on-surface-variant">
+                  Link your Telegram account so agents can send you notifications.{" "}
+                  Open{" "}
+                  <a
+                    href="https://t.me/opendock_bot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline underline-offset-2 hover:text-primary/80"
+                  >
+                    @opendock_bot
+                  </a>{" "}
+                  on Telegram, then generate a token below and send the command to the bot.
+                </p>
+
+                {!telegramToken ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={generateTelegramToken}
+                      disabled={telegramTokenLoading || authStatus === "needed"}
+                      className="w-fit rounded-full bg-primary text-on-primary px-lg py-sm text-sm font-semibold disabled:opacity-50"
+                    >
+                      {telegramTokenLoading ? "Generating…" : "Generate Token"}
+                    </button>
+                    {telegramError && (
+                      <p className="text-xs text-error">{telegramError}</p>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex flex-col gap-sm">
+                    <p className="text-xs text-on-surface-variant">
+                      Send the command below to{" "}
+                      <a
+                        href="https://t.me/opendock_bot"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary underline"
+                      >
+                        @opendock_bot
+                      </a>.
+                      {" "}Token expires{" "}
+                      {telegramTokenExpiresAt
+                        ? new Date(telegramTokenExpiresAt).toLocaleTimeString()
+                        : "soon"}.
+                    </p>
+                    <div className="flex items-center gap-sm rounded-md border border-outline-variant/40 bg-surface-container-low px-md py-sm font-data-mono text-sm text-on-surface">
+                      <span className="flex-1 truncate select-all">/register {telegramToken}</span>
+                      <button
+                        type="button"
+                        onClick={copyTelegramCommand}
+                        className="text-xs font-semibold text-primary hover:underline whitespace-nowrap"
+                      >
+                        {telegramCopied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-sm">
+                      <button
+                        type="button"
+                        onClick={verifyTelegramToken}
+                        disabled={telegramVerifyLoading}
+                        className="rounded-full bg-primary text-on-primary px-lg py-sm text-sm font-semibold disabled:opacity-50"
+                      >
+                        {telegramVerifyLoading ? "Checking…" : "Check"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={generateTelegramToken}
+                        disabled={telegramTokenLoading}
+                        className="rounded-full border border-outline-variant px-md py-sm text-sm font-semibold text-on-surface disabled:opacity-50"
+                      >
+                        Regenerate
+                      </button>
+                    </div>
+                    {telegramVerifyResult === "pending" && (
+                      <p className="text-xs text-on-surface-variant">
+                        ⏳ Not received yet — send the command to the bot first, then click Check again.
+                      </p>
+                    )}
+                    {telegramVerifyResult === "success" && (
+                      <p className="text-xs font-semibold text-green-700">
+                        ✓ Telegram account bound successfully!
+                      </p>
+                    )}
+                    {telegramError && (
+                      <p className="text-xs text-error">{telegramError}</p>
+                    )}
+                  </div>
+                )}
+
+                {authStatus === "needed" && (
+                  <p className="text-xs text-on-surface-variant">
+                    You need to{" "}
+                    <button
+                      type="button"
+                      onClick={signIn}
+                      className="text-primary font-semibold underline"
+                    >
+                      sign in
+                    </button>
+                    {" "}to bind Telegram.
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>

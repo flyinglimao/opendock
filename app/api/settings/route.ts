@@ -1,5 +1,5 @@
 // app/api/settings/route.ts
-// Per-user settings API (Brave API key, etc.)
+// Per-user settings API (Brave API key, Telegram binding, etc.)
 // Protected by session auth (wallet signature).
 
 import { NextRequest, NextResponse } from "next/server";
@@ -17,12 +17,14 @@ export async function GET(req: NextRequest) {
 
   const setting = await prisma.userSetting.findUnique({
     where: { userAddress: address.toLowerCase() },
-    select: { braveApiKey: true },
+    select: { braveApiKey: true, telegramUserId: true },
   });
 
   return NextResponse.json({
     braveApiKey: setting?.braveApiKey ? maskKey(setting.braveApiKey) : null,
     hasBraveApiKey: Boolean(setting?.braveApiKey),
+    telegramUserId: setting?.telegramUserId ?? null,
+    hasTelegramBinding: Boolean(setting?.telegramUserId),
   });
 }
 
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest) {
 
 interface SettingsBody {
   braveApiKey?: string | null;
+  telegramUserId?: string | null; // pass null to unbind
 }
 
 export async function PUT(req: NextRequest) {
@@ -55,6 +58,15 @@ export async function PUT(req: NextRequest) {
       where: { userAddress: address.toLowerCase() },
       update: { braveApiKey: key || null },
       create: { userAddress: address.toLowerCase(), braveApiKey: key || null },
+    });
+  }
+
+  // Support clearing the Telegram binding
+  if (body.telegramUserId === null) {
+    await prisma.userSetting.upsert({
+      where: { userAddress: address.toLowerCase() },
+      update: { telegramUserId: null },
+      create: { userAddress: address.toLowerCase(), telegramUserId: null },
     });
   }
 
