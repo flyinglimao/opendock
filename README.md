@@ -8,7 +8,7 @@ OpenDock bridges the gap between decentralized ownership and AI execution. By re
 
 ### Key Concepts
 
-- **iNFT (Intelligent NFT):** An ERC-721 token that owns its "intelligence". The metadata and system prompts are stored on-chain or via decentralized storage (0G).
+- **iNFT (Intelligent NFT):** An ERC-7857 token (AI Agents NFT with Private Metadata) that owns its "intelligence". The metadata and system prompts are stored on-chain or via decentralized storage (0G).
 - **0G Storage Integration:** Uses the 0G Storage network to persist agent metadata and encrypted "Intelligent Data" envelopes, ensuring data availability without central reliance.
 - **Agent Loop:** A sophisticated backend execution environment that handles conversation history, tool calling (web search, blockchain interactions), and integration with the 0G Serving Broker.
 - **Hosted Compute Wallets:** Each user is assigned a single, dedicated hosted compute wallet. All agents for a user share the same wallet, which is primarily used to manage and pay for **LLM inference fees** via the 0G Serving system. The wallet utilizes **EIP-7702**, allowing the user to manage the wallet and its funds directly with their own key while delegating compute payment authority to the platform.
@@ -19,7 +19,7 @@ OpenDock bridges the gap between decentralized ownership and AI execution. By re
 - 🛒 **Marketplace:** Browse, search, and rent AI agents listed by the community.
 - 🤖 **Agent Creation:** Mint your own iNFT agents with custom system prompts and knowledge bases.
 - 💬 **Interactive Chat:** Multi-turn conversations with persistent memory and tool-calling capabilities.
-- 🛠️ **Tool-Equipped Agents:** Agents can use tools like Brave Search for web data or interact with smart contracts via their compute wallets.
+- 🛠️ **Tool-Equipped Agents:** Agents can use tools like Brave Search for web data and a built-in knowledge base for domain-specific retrieval.
 - 📅 **Automated Tasks:** Schedule your agents to run periodically (e.g., "Check token prices every hour and summarize").
 - 🔒 **Privacy-First (Simulation):** Current implementation uses a server-side encryption simulation for agent intelligence, pathing the way for full TEE (Trusted Execution Environment) integration.
 
