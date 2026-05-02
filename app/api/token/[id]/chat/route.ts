@@ -154,7 +154,7 @@ export async function POST(
       | null = null;
 
     if (walletMode === "hosted") {
-      const { signer } = await getAgentComputeWalletSigner(id, address);
+      const { signer } = getAgentComputeWalletSigner(id, address);
       hostedBroker = await createZGComputeNetworkBroker(signer);
       const hostedHeaders = await hostedBroker.inference.getRequestHeaders(
         body.providerAddress

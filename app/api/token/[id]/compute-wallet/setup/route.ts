@@ -113,12 +113,12 @@ export async function POST(
 
   try {
     const normalizedImplementation = getAddress(implementation);
-    const { record, signer: hostedSigner } = await getAgentComputeWalletSigner(
+    const { address: walletAddress, signer: hostedSigner } = getAgentComputeWalletSigner(
       id,
       auth.address!
     );
     const provider = getAgentComputeProvider();
-    const code = await provider.getCode(record.address);
+    const code = await provider.getCode(walletAddress);
     const delegatedImplementation = getDelegatedImplementation(code);
     const serviceName = await getInferenceServiceName();
     const funding = getAgentComputeFundingConfig();
@@ -128,7 +128,7 @@ export async function POST(
       delegatedImplementation?.toLowerCase() ===
       normalizedImplementation.toLowerCase()
     ) {
-      const currentOwner = await getDelegateOwner(record.address);
+      const currentOwner = await getDelegateOwner(walletAddress);
       const ownerReady = currentOwner?.toLowerCase() === expectedOwner.toLowerCase();
       if (!ownerReady && currentOwner) {
         return NextResponse.json(
@@ -149,7 +149,7 @@ export async function POST(
       if (!ownerReady) {
         const relayer = getAgentComputeRelayerSigner();
         const tx = await relayer.sendTransaction({
-          to: record.address,
+          to: walletAddress,
           data: DELEGATE_SETUP_IFACE.encodeFunctionData("initializeOwner", [
             expectedOwner,
           ]),
@@ -163,7 +163,7 @@ export async function POST(
 
       return NextResponse.json({
         configured: true,
-        wallet: { address: record.address },
+        wallet: { address: walletAddress },
         delegate: {
           ready: true,
           ownerAddress: expectedOwner,
@@ -197,7 +197,7 @@ export async function POST(
     });
     const tx = await relayer.sendTransaction({
       type: 4,
-      to: record.address,
+      to: walletAddress,
       value: 0n,
       data: DELEGATE_SETUP_IFACE.encodeFunctionData("initializeOwner", [
         expectedOwner,
@@ -212,7 +212,7 @@ export async function POST(
 
     return NextResponse.json({
       configured: true,
-      wallet: { address: record.address },
+      wallet: { address: walletAddress },
       delegate: {
         ready: true,
         ownerAddress: expectedOwner,

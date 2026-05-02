@@ -168,14 +168,13 @@ export async function ensureAgentComputeWallet(
   throw new Error("Unable to allocate a unique hosted compute wallet path.");
 }
 
-export async function getAgentComputeWalletSigner(
-  tokenId: string,
+// All agents for a user share the same hosted wallet keyed by userAddress only.
+// The tokenId parameter is kept for API compatibility but is ignored.
+export function getAgentComputeWalletSigner(
+  _tokenId: string,
   userAddress: string
-): Promise<{ record: AgentComputeWalletRecord; signer: Wallet }> {
-  const record = await ensureAgentComputeWallet(tokenId, userAddress);
-  const provider = getAgentComputeProvider();
-  const signer = new Wallet(deriveWalletAtPath(record.hdPath).privateKey, provider);
-  return { record, signer };
+): { address: string; signer: Wallet } {
+  return getUserComputeWalletSigner(userAddress);
 }
 
 // User-level (per-wallet) hosted wallet — no agent / tokenId required.

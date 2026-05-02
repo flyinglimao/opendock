@@ -120,17 +120,17 @@ async function getHostedWalletState(
   userAddress: string,
   providerAddress: string | null
 ) {
-  const { record, signer } = await getAgentComputeWalletSigner(tokenId, userAddress);
+  const { address: walletAddress, signer } = getAgentComputeWalletSigner(tokenId, userAddress);
   const broker = await createZGComputeNetworkBroker(signer);
-  const nativeBalanceWei = (await signer.provider!.getBalance(record.address)).toString();
-  const code = await signer.provider!.getCode(record.address);
+  const nativeBalanceWei = (await signer.provider!.getBalance(walletAddress)).toString();
+  const code = await signer.provider!.getCode(walletAddress);
   const delegatedImplementation = getDelegatedImplementation(code);
   const configuredImplementation = getAgentComputeDelegateImplementation();
   const normalizedImplementation =
     configuredImplementation && isAddress(configuredImplementation)
       ? getAddress(configuredImplementation)
       : null;
-  const ownerAddress = delegatedImplementation ? await getDelegateOwner(record.address) : null;
+  const ownerAddress = delegatedImplementation ? await getDelegateOwner(walletAddress) : null;
   const normalizedUserAddress = getAddress(userAddress);
   const delegateReady =
     Boolean(normalizedImplementation) &&
@@ -185,7 +185,7 @@ async function getHostedWalletState(
 
   return {
     wallet: {
-      address: record.address,
+      address: walletAddress,
       nativeBalanceWei,
     },
     delegate: {
@@ -259,7 +259,7 @@ export async function POST(
   }
 
   try {
-    const { signer } = await getAgentComputeWalletSigner(id, auth.address!);
+    const { signer } = getAgentComputeWalletSigner(id, auth.address!);
     const broker = await createZGComputeNetworkBroker(signer);
     await broker.ledger.transferFund(
       body.providerAddress,
