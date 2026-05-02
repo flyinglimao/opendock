@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useBalance, useWalletClient } from "wagmi";
+import { useAccount, useBalance, useConfig, useWalletClient } from "wagmi";
+import type { Config } from "wagmi";
 import { BrowserProvider, Contract, parseEther } from "ethers";
-import { buildAuthMessage } from "@/lib/auth";
+import { buildSessionAuthMessage } from "@/lib/auth";
 import { COMPUTE_PROVIDERS } from "@/lib/compute-providers";
 
 type FundsTab = "ledger" | "providers";
+type AuthSessionStatus = "checking" | "ready" | "needed" | "signing";
 
 interface DashboardAgent {
   tokenId: string;
@@ -70,6 +72,55 @@ const DELEGATE_ABI = [
 ] as const;
 
 const AUTH_BEARER_CACHE_MS = 25 * 60 * 1000;
+const emptySubscribe = () => () => {};
+
+interface CachedAuthSession {
+  address: string;
+  bearer: string;
+  timestamp: number;
+}
+
+interface WagmiPersistControls {
+  hasHydrated: () => boolean;
+  onHydrate: (listener: () => void) => () => void;
+  onFinishHydration: (listener: () => void) => () => void;
+}
+
+function getWagmiPersist(config: Config): WagmiPersistControls | null {
+  const store = config._internal.store as unknown as { persist?: WagmiPersistControls };
+  return store.persist ?? null;
+}
+
+function useHydrated() {
+  return useSyncExternalStore(emptySubscribe, () => true, () => false);
+}
+
+function useWagmiStoreHydrated() {
+  const config = useConfig();
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      const persist = getWagmiPersist(config);
+      const unsubscribeStatus = config.subscribe((state) => state.status, onStoreChange);
+      const unsubscribeHydrate = persist?.onHydrate(onStoreChange) ?? emptySubscribe();
+      const unsubscribeFinishHydration =
+        persist?.onFinishHydration(onStoreChange) ?? emptySubscribe();
+
+      return () => {
+        unsubscribeStatus();
+        unsubscribeHydrate();
+        unsubscribeFinishHydration();
+      };
+    },
+    [config]
+  );
+
+  return useSyncExternalStore(
+    subscribe,
+    () => !config._internal.ssr || (getWagmiPersist(config)?.hasHydrated() ?? true),
+    () => false
+  );
+}
 
 function weiToOg(wei: string | bigint | null | undefined): number {
   if (!wei) return 0;
@@ -97,41 +148,40 @@ function shortAddress(address: string | null | undefined): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-async function buildAuthBearer(
-  tokenId: string,
-  signer: import("ethers").JsonRpcSigner
-): Promise<string> {
-  const address = await signer.getAddress();
-  const cacheKey = `opendock.auth.${tokenId}.${address.toLowerCase()}`;
-  try {
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) {
-      const parsed = JSON.parse(cached) as {
-        address: string;
-        bearer: string;
-        timestamp: number;
-      };
-      if (
-        parsed.address.toLowerCase() === address.toLowerCase() &&
-        Date.now() - parsed.timestamp < AUTH_BEARER_CACHE_MS
-      ) {
-        return parsed.bearer;
-      }
-    }
-  } catch {
-    // Cache is optional; wallet signatures remain the source of truth.
-  }
+function getAuthSessionKey(address: string) {
+  return `opendock.auth.session.${address.toLowerCase()}`;
+}
 
-  const timestamp = Date.now();
-  const signature = await signer.signMessage(buildAuthMessage(tokenId, timestamp));
-  const bearer = `Bearer ${window.btoa(JSON.stringify({ address, timestamp, signature }))}`;
+function isAuthSessionFresh(session: CachedAuthSession, address: string) {
+  return (
+    session.address.toLowerCase() === address.toLowerCase() &&
+    Date.now() - session.timestamp < AUTH_BEARER_CACHE_MS
+  );
+}
+
+function readCachedAuthSession(address: string): CachedAuthSession | null {
   try {
-    sessionStorage.setItem(
-      cacheKey,
-      JSON.stringify({ address, bearer, timestamp })
-    );
+    const cached = sessionStorage.getItem(getAuthSessionKey(address));
+    if (!cached) return null;
+    const session = JSON.parse(cached) as CachedAuthSession;
+    return isAuthSessionFresh(session, address) ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+async function createAuthSession(
+  signer: import("ethers").JsonRpcSigner
+): Promise<CachedAuthSession> {
+  const address = await signer.getAddress();
+  const timestamp = Date.now();
+  const signature = await signer.signMessage(buildSessionAuthMessage(timestamp));
+  const bearer = `Bearer ${window.btoa(JSON.stringify({ address, timestamp, signature }))}`;
+  const session = { address, bearer, timestamp };
+  try {
+    sessionStorage.setItem(getAuthSessionKey(address), JSON.stringify(session));
   } catch {}
-  return bearer;
+  return session;
 }
 
 function AgentCard({
@@ -230,7 +280,9 @@ function AmountInput({
 }
 
 export default function DashboardTabs() {
-  const { address, isConnected } = useAccount();
+  const hydrated = useHydrated();
+  const wagmiStoreHydrated = useWagmiStoreHydrated();
+  const { address, status } = useAccount();
   const { data: walletClient } = useWalletClient();
   const { data: nativeBalance } = useBalance({ address });
   const [agents, setAgents] = useState<{ owned: DashboardAgent[]; rented: DashboardAgent[] }>({
@@ -242,10 +294,18 @@ export default function DashboardTabs() {
   const [fundsTab, setFundsTab] = useState<FundsTab>("providers");
   const [walletLedger, setWalletLedger] = useState<WalletLedgerState | null>(null);
   const [cloudState, setCloudState] = useState<HostedComputeWalletState | null>(null);
+  const [authSession, setAuthSession] = useState<CachedAuthSession | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthSessionStatus>("checking");
   const [fundLoading, setFundLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const firstLoadRef = useRef(false);
+  const accountReady = hydrated && Boolean(address);
+  const walletChecking =
+    !hydrated ||
+    !wagmiStoreHydrated ||
+    status === "connecting" ||
+    status === "reconnecting";
 
   const allAgents = useMemo(
     () => [...agents.owned, ...agents.rented],
@@ -278,10 +338,39 @@ export default function DashboardTabs() {
     return createZGComputeNetworkBroker(signer);
   }, [getSigner]);
 
-  const buildBearer = useCallback(async (tokenId: string) => {
-    const signer = await getSigner();
-    return buildAuthBearer(tokenId, signer);
-  }, [getSigner]);
+  const signIn = useCallback(async () => {
+    if (!address || !walletClient) return null;
+    setAuthStatus("signing");
+    setError(null);
+    try {
+      const signer = await getSigner();
+      const session = await createAuthSession(signer);
+      setAuthSession(session);
+      setAuthStatus("ready");
+      return session;
+    } catch (err) {
+      setAuthSession(null);
+      setAuthStatus("needed");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Sign in is required to load your cloud wallet"
+      );
+      return null;
+    }
+  }, [address, getSigner, walletClient]);
+
+  const getAuthSession = useCallback(async () => {
+    if (!address) return null;
+    if (authSession && isAuthSessionFresh(authSession, address)) return authSession;
+    const cached = readCachedAuthSession(address);
+    if (cached) {
+      setAuthSession(cached);
+      setAuthStatus("ready");
+      return cached;
+    }
+    return signIn();
+  }, [address, authSession, signIn]);
 
   const refreshAgents = useCallback(async () => {
     if (!address) return;
@@ -303,7 +392,7 @@ export default function DashboardTabs() {
   }, [address]);
 
   const refreshWalletLedger = useCallback(async () => {
-    if (!isConnected || !address) return;
+    if (!address || !walletClient) return;
     try {
       const broker = await getBroker();
       let availableBalanceWei = "0";
@@ -331,19 +420,18 @@ export default function DashboardTabs() {
       setError(err instanceof Error ? err.message : String(err));
       setWalletLedger({ hasLedger: false, availableBalanceWei: "0", providerBalances: {} });
     }
-  }, [address, getBroker, isConnected]);
+  }, [address, getBroker, walletClient]);
 
   const refreshCloudLedger = useCallback(async () => {
-    if (!selectedAgent || !isConnected) {
+    if (!address) {
       setCloudState(null);
       return;
     }
     try {
-      const bearer = await buildBearer(selectedAgent.tokenId);
       const provider = COMPUTE_PROVIDERS[0];
       const res = await fetch(
-        `/api/token/${selectedAgent.tokenId}/compute-wallet?provider=${encodeURIComponent(provider.address)}`,
-        { headers: { Authorization: bearer }, cache: "no-store" }
+        `/api/wallet/compute-wallet?address=${encodeURIComponent(address)}&provider=${encodeURIComponent(provider.address)}`,
+        { cache: "no-store" }
       );
       const data = (await res.json().catch(() => null)) as HostedComputeWalletState | null;
       if (!res.ok || !data) throw new Error(data?.error ?? "Cloud wallet unavailable");
@@ -352,22 +440,56 @@ export default function DashboardTabs() {
       setCloudState(null);
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [buildBearer, isConnected, selectedAgent]);
+  }, [address]);
 
   const refreshFunds = useCallback(async () => {
     await Promise.all([refreshWalletLedger(), refreshCloudLedger()]);
   }, [refreshCloudLedger, refreshWalletLedger]);
 
   useEffect(() => {
-    if (!isConnected || !address || firstLoadRef.current) return;
+    if (!accountReady || !address || firstLoadRef.current) return;
     firstLoadRef.current = true;
     queueMicrotask(() => {
       void refreshAgents();
     });
-  }, [address, isConnected, refreshAgents]);
+  }, [accountReady, address, refreshAgents]);
 
   useEffect(() => {
-    if (!isConnected || !address) {
+    if (!accountReady || !address) {
+      queueMicrotask(() => {
+        setAuthSession(null);
+        setAuthStatus("checking");
+      });
+      return;
+    }
+
+    const cached = readCachedAuthSession(address);
+    queueMicrotask(() => {
+      setAuthSession(cached);
+      setAuthStatus(cached ? "ready" : "needed");
+    });
+  }, [accountReady, address]);
+
+  useEffect(() => {
+    if (!authSession || !address) return;
+    const expiresIn = AUTH_BEARER_CACHE_MS - (Date.now() - authSession.timestamp);
+    if (expiresIn <= 0) {
+      queueMicrotask(() => {
+        setAuthSession(null);
+        setAuthStatus("needed");
+      });
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setAuthSession(null);
+      setAuthStatus("needed");
+    }, expiresIn);
+    return () => window.clearTimeout(timeout);
+  }, [address, authSession]);
+
+  useEffect(() => {
+    if (!accountReady || !address) {
       firstLoadRef.current = false;
       queueMicrotask(() => {
         setAgents({ owned: [], rented: [] });
@@ -380,7 +502,7 @@ export default function DashboardTabs() {
     queueMicrotask(() => {
       void refreshFunds();
     });
-  }, [address, isConnected, refreshFunds, selectedAgentId]);
+  }, [accountReady, address, refreshFunds]);
 
   const withAction = useCallback(
     async (key: string, action: () => Promise<void>) => {
@@ -399,18 +521,18 @@ export default function DashboardTabs() {
   );
 
   const setupCloudWallet = useCallback(async () => {
-    if (!selectedAgent) return;
     await withAction("cloud-setup", async () => {
-      const bearer = await buildBearer(selectedAgent.tokenId);
-      const res = await fetch(`/api/token/${selectedAgent.tokenId}/compute-wallet/setup`, {
+      const session = await getAuthSession();
+      if (!session) throw new Error("Sign in is required to enable the cloud wallet");
+      const res = await fetch("/api/wallet/compute-wallet/setup", {
         method: "POST",
-        headers: { Authorization: bearer },
+        headers: { Authorization: session.bearer },
       });
       const data = (await res.json().catch(() => null)) as HostedComputeWalletState | null;
       if (!res.ok || !data) throw new Error(data?.error ?? "Cloud wallet setup failed");
       setCloudState(data);
     });
-  }, [buildBearer, selectedAgent, withAction]);
+  }, [getAuthSession, withAction]);
 
   const walletDepositLedger = useCallback(async () => {
     await withAction("wallet-ledger-deposit", async () => {
@@ -506,7 +628,16 @@ export default function DashboardTabs() {
     });
   }, [cloudState, getCloudDelegate, withAction]);
 
-  if (!isConnected) {
+  if (walletChecking) {
+    return (
+      <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-xl flex flex-col items-center gap-md">
+        <span className="inline-block w-8 h-8 border-2 border-outline/30 border-t-outline rounded-full animate-spin" />
+        <p className="text-on-surface-variant">Checking wallet connection...</p>
+      </div>
+    );
+  }
+
+  if (!address) {
     return (
       <div className="rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-xl flex flex-col items-center gap-md">
         <span className="material-symbols-outlined text-outline" style={{ fontSize: 40 }}>
@@ -581,10 +712,14 @@ export default function DashboardTabs() {
               <button
                 type="button"
                 onClick={setupCloudWallet}
-                disabled={!cloudState?.delegate.setupAvailable || Boolean(fundLoading)}
+                disabled={
+                  (cloudState !== null && !cloudState.delegate.setupAvailable) ||
+                  Boolean(fundLoading) ||
+                  authStatus === "signing"
+                }
                 className="w-fit rounded-full bg-primary text-on-primary px-md py-xs text-xs font-semibold disabled:opacity-50"
               >
-                Enable
+                {authStatus === "signing" ? "Signing" : "Enable"}
               </button>
             )}
           </div>
@@ -764,7 +899,10 @@ export default function DashboardTabs() {
               onFund={cloudFundProvider}
               onWithdraw={cloudWithdrawProvider}
               loading={fundLoading}
-              disabled={!cloudState?.delegate.ready || !cloudState.ledger.hasLedger}
+              disabled={
+                !cloudState?.delegate.ready ||
+                !cloudState.ledger.hasLedger
+              }
             />
           </div>
         )}

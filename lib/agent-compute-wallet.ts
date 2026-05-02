@@ -177,3 +177,19 @@ export async function getAgentComputeWalletSigner(
   const signer = new Wallet(deriveWalletAtPath(record.hdPath).privateKey, provider);
   return { record, signer };
 }
+
+// User-level (per-wallet) hosted wallet — no agent / tokenId required.
+// Derived deterministically from the user address; not persisted to the DB.
+export function getUserComputeWalletSigner(
+  userAddress: string
+): { address: string; signer: Wallet } {
+  const normalizedAddress = getAddress(userAddress).toLowerCase();
+  const digest = keccak256(
+    toUtf8Bytes(`${DERIVATION_PURPOSE}:user:${zgTestnet.id}:${normalizedAddress}`)
+  );
+  const index = Number(BigInt(digest) & 0x7fffffffn);
+  const hdPath = buildPath(index);
+  const wallet = deriveWalletAtPath(hdPath);
+  const provider = getAgentComputeProvider();
+  return { address: wallet.address, signer: new Wallet(wallet.privateKey, provider) };
+}

@@ -47,6 +47,11 @@ export function buildAuthMessage(tokenId: string, timestamp: number): string {
   return `OpenDock access request\nToken: ${tokenId}\nTimestamp: ${timestamp}`;
 }
 
+/** Canonical session message for one signature across token-scoped requests. */
+export function buildSessionAuthMessage(timestamp: number): string {
+  return `OpenDock session request\nTimestamp: ${timestamp}`;
+}
+
 /**
  * Decode and verify a Bearer auth header.
  * Header value: `Bearer <base64(JSON(AuthPayload))>`
@@ -61,11 +66,25 @@ export async function verifyAuthHeader(
     const raw = Buffer.from(authHeader.slice(7), "base64").toString("utf8");
     const { address, timestamp, signature } = JSON.parse(raw) as AuthPayload;
     if (Math.abs(Date.now() - timestamp) > AUTH_WINDOW_MS) return null;
-    const recovered = await recoverMessageAddress({
-      message: buildAuthMessage(tokenId, timestamp),
-      signature: signature as `0x${string}`,
-    });
-    if (recovered.toLowerCase() !== address.toLowerCase()) return null;
+    const tokenMessage = buildAuthMessage(tokenId, timestamp);
+    const sessionMessage = buildSessionAuthMessage(timestamp);
+    const recoveredAddresses = await Promise.all([
+      recoverMessageAddress({
+        message: tokenMessage,
+        signature: signature as `0x${string}`,
+      }).catch(() => null),
+      recoverMessageAddress({
+        message: sessionMessage,
+        signature: signature as `0x${string}`,
+      }).catch(() => null),
+    ]);
+    if (
+      !recoveredAddresses.some(
+        (recovered) => recovered?.toLowerCase() === address.toLowerCase()
+      )
+    ) {
+      return null;
+    }
     return address;
   } catch {
     return null;

@@ -1,6 +1,6 @@
-// Auth-gated hosted compute wallet endpoint.
-// The caller signs the normal OpenDock token auth message; the server verifies
-// token access before allocating or operating a hosted 0G Compute wallet.
+// Hosted compute wallet endpoint.
+// GET is read-only and can derive public wallet/balance state from token + user
+// address. Mutating operations remain auth-gated.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createZGComputeNetworkBroker } from "@0glabs/0g-serving-broker";
@@ -86,6 +86,33 @@ async function requireAuthorizedAddress(id: string, req: NextRequest) {
   }
 
   return { response: null, address };
+}
+
+async function getReadOnlyAddress(id: string, req: NextRequest) {
+  const authAddress = await verifyAuthHeader(id, req.headers.get("Authorization"));
+  if (authAddress) {
+    const { isAuthorized } = await checkOnChainAuth(id, authAddress);
+    if (!isAuthorized) {
+      return {
+        response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+        address: null,
+      };
+    }
+    return { response: null, address: authAddress };
+  }
+
+  const addressParam = req.nextUrl.searchParams.get("address");
+  if (!addressParam || !isAddress(addressParam)) {
+    return {
+      response: NextResponse.json(
+        { error: "address query parameter is required" },
+        { status: 400 }
+      ),
+      address: null,
+    };
+  }
+
+  return { response: null, address: getAddress(addressParam) };
 }
 
 async function getHostedWalletState(
@@ -180,8 +207,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const auth = await requireAuthorizedAddress(id, req);
-  if (auth.response) return auth.response;
+  const read = await getReadOnlyAddress(id, req);
+  if (read.response) return read.response;
 
   if (!hasAgentComputeRootSecret()) {
     return NextResponse.json(
@@ -192,7 +219,7 @@ export async function GET(
 
   const providerAddress = req.nextUrl.searchParams.get("provider");
   try {
-    const state = await getHostedWalletState(id, auth.address!, providerAddress);
+    const state = await getHostedWalletState(id, read.address!, providerAddress);
     return NextResponse.json({ configured: true, ...state });
   } catch (err) {
     return NextResponse.json(
