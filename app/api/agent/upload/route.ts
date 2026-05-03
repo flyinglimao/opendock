@@ -22,30 +22,36 @@ const BASE_URL =
 
 async function uploadBuffer(
   data: Uint8Array,
-  signer: Wallet
+  signer: Wallet,
+  label: string
 ): Promise<{ rootHash: `0x${string}`; txHash: string | null }> {
   const { MemData, Indexer } = await import("@0gfoundation/0g-ts-sdk");
   const memData = new MemData(data);
   const [tree, treeErr] = await memData.merkleTree();
   if (treeErr !== null || !tree) {
-    throw new Error(`0G Merkle tree error: ${treeErr}`);
+    throw new Error(`[${label}] 0G Merkle tree error: ${treeErr}`);
   }
   const rootHash = tree.rootHash();
-  if (!rootHash) throw new Error("0G Merkle tree returned empty root hash");
+  if (!rootHash) throw new Error(`[${label}] 0G Merkle tree returned empty root hash`);
 
+  console.log(`[${label}] uploading ${data.byteLength} bytes, rootHash=${rootHash}`);
   const indexer = new Indexer(ZG_INDEXER_URL);
   const [tx, uploadErr] = await indexer.upload(
     memData,
     ZG_EVM_RPC,
     signer,
-    undefined,
+    {
+      skipIfFinalized: true,
+      onProgress: (msg) => console.log(`[${label}] ${msg}`),
+    },
     undefined,
     { gasPrice: BigInt(20_000_000_000) }
   );
   if (uploadErr !== null) {
-    throw new Error(`0G upload error: ${uploadErr}`);
+    throw new Error(`[${label}] 0G upload error: ${uploadErr}`);
   }
 
+  console.log(`[${label}] done, txHash=${(tx as { txHash?: string } | null)?.txHash ?? "n/a"}`);
   return {
     rootHash: rootHash as `0x${string}`,
     txHash: (tx as { txHash?: string } | null)?.txHash ?? null,
@@ -87,7 +93,7 @@ export async function POST(req: NextRequest) {
   if (imageFile && imageFile.size > 0) {
     const imageBuffer = new Uint8Array(await imageFile.arrayBuffer());
     imageMimeType = imageFile.type || "image/webp";
-    const result = await uploadBuffer(imageBuffer, signer);
+    const result = await uploadBuffer(imageBuffer, signer, "image");
     imageHash = result.rootHash;
   }
 
@@ -98,7 +104,7 @@ export async function POST(req: NextRequest) {
   const metadataBytes = new TextEncoder().encode(
     JSON.stringify({ name, description, image: imageUrl, imageHash })
   );
-  const { rootHash: metadataHash } = await uploadBuffer(metadataBytes, signer);
+  const { rootHash: metadataHash } = await uploadBuffer(metadataBytes, signer, "metadata");
 
   // 3. Encrypt intelligence and upload
   const knowledgeBaseFiles = kbFilesJson
@@ -113,7 +119,7 @@ export async function POST(req: NextRequest) {
     version: 1,
   });
   const dataBytes = new TextEncoder().encode(JSON.stringify(envelope));
-  const { rootHash: dataHash } = await uploadBuffer(dataBytes, signer);
+  const { rootHash: dataHash } = await uploadBuffer(dataBytes, signer, "intelligence");
 
   return NextResponse.json({ imageHash, imageMimeType, metadataHash, dataHash });
 }
