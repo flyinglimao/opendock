@@ -46,7 +46,7 @@ export function hasAgentComputeRootSecret(): boolean {
 }
 
 export function hasAgentComputeRelayerSecret(): boolean {
-  return Boolean(process.env.OPENDOCK_AGENT_RELAYER_PRIVATE_KEY);
+  return hasAgentComputeRootSecret();
 }
 
 export function getAgentComputeProvider(): JsonRpcProvider {
@@ -81,16 +81,7 @@ export function getAgentComputeDelegateImplementation(): string | null {
 }
 
 export function getAgentComputeRelayerSigner(): Wallet {
-  const privateKey = process.env.OPENDOCK_AGENT_RELAYER_PRIVATE_KEY?.trim();
-  if (!privateKey) {
-    throw new Error(
-      "Platform wallet relayer is not configured. Set OPENDOCK_AGENT_RELAYER_PRIVATE_KEY."
-    );
-  }
-  if (!isHexString(privateKey, 32)) {
-    throw new Error("OPENDOCK_AGENT_RELAYER_PRIVATE_KEY must be a 32-byte hex private key.");
-  }
-  return new Wallet(privateKey, getAgentComputeProvider());
+  return getServerUploadSigner();
 }
 
 function getRootHDWallet(): HDNodeWallet {
@@ -175,6 +166,13 @@ export function getAgentComputeWalletSigner(
   userAddress: string
 ): { address: string; signer: Wallet } {
   return getUserComputeWalletSigner(userAddress);
+}
+
+// Dedicated server-side wallet for paying 0G Storage upload fees during agent creation.
+// Uses a fixed derivation path on the /1/ account to avoid collisions with user wallets (/0/).
+export function getServerUploadSigner(): Wallet {
+  const wallet = getRootHDWallet().derivePath(`m/44'/60'/${zgTestnet.id}'/1/0`);
+  return new Wallet(wallet.privateKey, getAgentComputeProvider());
 }
 
 // User-level (per-wallet) hosted wallet — no agent / tokenId required.

@@ -5,25 +5,17 @@ import { useRouter } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import {
   useAccount,
-  useWalletClient,
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { BrowserProvider, JsonRpcSigner } from "ethers";
 import { decodeEventLog } from "viem";
-import { uploadMetadata, uploadAgentData, uploadImage } from "@/lib/0g-storage";
 import { INFT_ADDRESS, INFT_ABI } from "@/lib/contracts";
 import PreviewChatPanel from "./PreviewChatPanel";
-
-const BASE_URL =
-  process.env.NEXT_PUBLIC_BASE_URL ?? "https://opendock.vercel.app";
 
 // ---- Step definitions ----
 type Step =
   | { id: "idle" }
-  | { id: "uploading_image" }
-  | { id: "uploading_metadata" }
-  | { id: "uploading_data" }
+  | { id: "uploading" }
   | { id: "minting" }
   | {
       id: "waiting";
@@ -37,9 +29,7 @@ type Step =
   | { id: "error"; message: string };
 
 const STEPS = [
-  { key: "uploading_image", label: "Upload Image" },
-  { key: "uploading_metadata", label: "Upload Metadata" },
-  { key: "uploading_data", label: "Upload Intelligence" },
+  { key: "uploading", label: "Upload to 0G" },
   { key: "minting", label: "Mint iNFT" },
   { key: "waiting", label: "Confirming" },
   { key: "registering", label: "Registering" },
@@ -168,7 +158,6 @@ export function loadMintedTokens(): MintedToken[] {
 export default function CreateAgentForm() {
   const router = useRouter();
   const { address, isConnected } = useAccount();
-  const { data: walletClient } = useWalletClient();
 
   const [agentName, setAgentName] = useState("");
   const [description, setDescription] = useState("");
@@ -301,69 +290,43 @@ export default function CreateAgentForm() {
 
   const handleDeploy = useCallback(async () => {
     if (!agentName.trim()) return;
-    if (!isConnected || !walletClient || !address) return;
+    if (!isConnected || !address) return;
 
     try {
-      const provider = new BrowserProvider(walletClient.transport);
-      const signer = new JsonRpcSigner(provider, address);
+      // ---- Step 1: Upload all assets to 0G via server (server wallet pays fees) ----
+      setStep({ id: "uploading" });
 
-      // ---- Step 1: Upload image to 0G (resized to ≤512px, WebP) ----
-      let imageHashHex = "";
-      let imageMimeType = "image/webp";
+      const formData = new FormData();
+      formData.set("name", agentName);
+      formData.set("description", description);
+      formData.set("systemPrompt", systemPrompt);
       if (imageFile) {
-        setStep({ id: "uploading_image" });
         const resized = await resizeToWebP(imageFile);
-        const { rootHash, contentType, txHash: imgTx } = await uploadImage(
-          resized,
-          signer
+        formData.set("image", resized);
+      }
+      if (kbFiles.length > 0) {
+        const kbData = await Promise.all(
+          kbFiles.map(async (f) => ({ name: f.name, content: await f.text() }))
         );
-        imageHashHex = rootHash;
-        imageMimeType = contentType;
-        console.log("Image upload tx:", imgTx, "hash:", rootHash);
-      } else {
-        // Skip image step if no image provided
-        setStep({ id: "uploading_metadata" });
+        formData.set("knowledgeBaseFiles", JSON.stringify(kbData));
       }
 
-      // ---- Step 2: Upload ERC-721 metadata ----
-      if (imageFile) setStep({ id: "uploading_metadata" });
+      const uploadRes = await fetch("/api/agent/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => null) as { error?: string } | null;
+        throw new Error(err?.error ?? "Upload failed");
+      }
+      const { metadataHash, dataHash } = await uploadRes.json() as {
+        imageHash: string;
+        imageMimeType: string;
+        metadataHash: `0x${string}`;
+        dataHash: `0x${string}`;
+      };
 
-      // We use /api/image/<hash>?type=<mime> as the image URL (content-addressable)
-      const imageUrl = imageHashHex
-        ? `${BASE_URL}/api/image/${imageHashHex}?type=${encodeURIComponent(imageMimeType)}`
-        : "";
-
-      const { rootHash: metadataHash, txHash: metaTx } = await uploadMetadata(
-        {
-          name: agentName,
-          description,
-          image: imageUrl,
-          imageHash: imageHashHex,
-          // systemPrompt excluded from public metadata; it belongs in private iNFT data.
-        },
-        signer
-      );
-      console.log("Metadata upload tx:", metaTx, "hash:", metadataHash);
-
-      // ---- Step 3: Upload encrypted intelligence data ----
-      setStep({ id: "uploading_data" });
-      const knowledgeBaseFiles = kbFiles.length > 0
-        ? await Promise.all(kbFiles.map(async (f) => ({ name: f.name, content: await f.text() })))
-        : undefined;
-      const {
-        rootHash: dataHash,
-        txHash: dataTx,
-      } = await uploadAgentData(
-        {
-          name: agentName,
-          systemPrompt,
-          knowledgeBaseFiles,
-        },
-        signer
-      );
-      console.log("Encrypted intelligence upload tx:", dataTx, "hash:", dataHash);
-
-      // ---- Step 4: Mint iNFT ----
+      // ---- Step 2: Mint iNFT ----
       setStep({ id: "minting" });
       const mintTxHash = await writeContractAsync({
         address: INFT_ADDRESS,
@@ -376,7 +339,7 @@ export default function CreateAgentForm() {
         ],
       });
 
-      // ---- Step 5: Wait ----
+      // ---- Step 3: Wait for confirmation ----
       setStep({
         id: "waiting",
         txHash: mintTxHash,
@@ -397,15 +360,12 @@ export default function CreateAgentForm() {
     systemPrompt,
     kbFiles,
     isConnected,
-    walletClient,
     address,
     writeContractAsync,
   ]);
 
   const isRunning = [
-    "uploading_image",
-    "uploading_metadata",
-    "uploading_data",
+    "uploading",
     "minting",
     "waiting",
     "registering",
@@ -729,9 +689,7 @@ export default function CreateAgentForm() {
                 {isRunning ? (
                   <>
                     <span className="inline-block w-4 h-4 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin" />
-                    {step.id === "uploading_image" && "Uploading image…"}
-                    {step.id === "uploading_metadata" && "Uploading metadata…"}
-                    {step.id === "uploading_data" && "Uploading intelligence…"}
+                    {step.id === "uploading" && "Uploading to 0G…"}
                     {step.id === "minting" && "Minting…"}
                     {step.id === "waiting" && "Confirming…"}
                     {step.id === "registering" && "Registering…"}
