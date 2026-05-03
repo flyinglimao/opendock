@@ -18,7 +18,7 @@ export const ZG_INDEXER_URL =
 
 export const ZG_EVM_RPC =
   process.env.NEXT_PUBLIC_ZG_EVM_RPC ??
-  "https://rpc.ankr.com/0g_galileo_testnet_evm";
+  "https://evmrpc-testnet.0g.ai";
 
 // ---- ERC-721 Metadata ----
 

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { encryptAgentIntelligence } from "@/lib/encryption";
 import { getServerUploadSigner } from "@/lib/agent-compute-wallet";
+import { JsonRpcProvider } from "ethers";
 import type { Wallet } from "ethers";
 
 const ZG_INDEXER_URL =
@@ -15,17 +16,20 @@ const ZG_INDEXER_URL =
 const ZG_EVM_RPC =
   process.env.ZG_EVM_RPC ??
   process.env.NEXT_PUBLIC_ZG_EVM_RPC ??
-  "https://rpc.ankr.com/0g_galileo_testnet_evm";
+  "https://evmrpc-testnet.0g.ai";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_BASE_URL ?? "https://opendock.vercel.app";
 
+// SDK 的 submitLogEntryNoReceipt 送出 TX 後不等 receipt，
+// 若 TX revert 則 waitForLogEntry 會永遠 polling。
+// 這裡透過 onProgress 捕捉 txHash，確認 receipt 後若 revert 立即中止。
 async function uploadBuffer(
   data: Uint8Array,
   signer: Wallet,
   label: string
 ): Promise<{ rootHash: `0x${string}`; txHash: string | null }> {
-  const { MemData, Indexer } = await import("@0gfoundation/0g-ts-sdk");
+  const { MemData, Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
   const memData = new MemData(data);
   const [tree, treeErr] = await memData.merkleTree();
   if (treeErr !== null || !tree) {
@@ -36,17 +40,47 @@ async function uploadBuffer(
 
   console.log(`[${label}] uploading ${data.byteLength} bytes, rootHash=${rootHash}`);
   const indexer = new Indexer(ZG_INDEXER_URL);
-  const [tx, uploadErr] = await indexer.upload(
-    memData,
-    ZG_EVM_RPC,
-    signer,
-    {
-      skipIfFinalized: true,
-      onProgress: (msg) => console.log(`[${label}] ${msg}`),
-    },
-    undefined,
-    { gasPrice: BigInt(20_000_000_000) }
-  );
+
+  let rejectFn: ((e: Error) => void) | null = null;
+  const revertGuard = new Promise<never>((_, reject) => { rejectFn = reject; });
+
+  function monitorTx(txHash: string) {
+    const provider = new JsonRpcProvider(ZG_EVM_RPC);
+    provider.waitForTransaction(txHash, 1, 90_000)
+      .then((receipt) => {
+        if (!receipt) {
+          rejectFn!(new Error(`[${label}] TX ${txHash} not mined within 90s — possible gas/nonce issue`));
+        } else if (receipt.status === 0) {
+          rejectFn!(new Error(`[${label}] TX ${txHash} reverted on chain`));
+        }
+        // status === 1: success, waitForLogEntry will resolve naturally
+      })
+      .catch(() => {
+        rejectFn!(new Error(`[${label}] TX ${txHash} not mined within 90s — possible gas/nonce issue`));
+      });
+  }
+
+  const [tx, uploadErr] = await Promise.race([
+    indexer.upload(
+      memData,
+      ZG_EVM_RPC,
+      signer,
+      {
+        onProgress: (msg) => {
+          console.log(`[${label}] ${msg}`);
+          const match = msg.match(/Transaction submitted: (0x[0-9a-fA-F]{64})/);
+          if (match) monitorTx(match[1]);
+        },
+      },
+      undefined,
+      {} // let SDK auto-detect gas price from network
+    ),
+    revertGuard,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`[${label}] upload timed out after 5 minutes`)), 5 * 60 * 1000)
+    ),
+  ]);
+
   if (uploadErr !== null) {
     throw new Error(`[${label}] 0G upload error: ${uploadErr}`);
   }

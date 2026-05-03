@@ -13,6 +13,7 @@
     "contracts:authorize-marketplace": "cd contracts && forge script script/AuthorizeMarketplace.s.sol --rpc-url https://evmrpc-testnet.0g.ai --broadcast --private-key $PRIVATE_KEY -vvvv"
   },
   "dependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
     "@0gfoundation/0g-ts-sdk": "^1.2.6",
     "@0glabs/0g-serving-broker": "^0.7.5",
     "@prisma/adapter-pg": "^7.8.0",
