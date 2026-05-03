@@ -74,7 +74,10 @@ export function buildToolInstructions(hasKB: boolean): string {
     "You have access to a web_search tool. Use it to look up current" +
     " information, recent events, or anything that may not be in your training data." +
     " If the tool returns an error asking the user to configure an API key, relay" +
-    " that message to the user as-is.";
+    " that message to the user as-is.\n\n" +
+    "You also have access to a web_fetch tool. Use it to fetch the full content of a" +
+    " specific URL — for example to read a page linked from search results, retrieve" +
+    " documentation, or get structured data from a known endpoint.";
   return instructions;
 }
 

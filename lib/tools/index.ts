@@ -1,5 +1,6 @@
 import { KB_TOOLS, executeKBTool, type KBFile } from "./kb";
 import { WEB_SEARCH_TOOL, executeBraveSearch } from "./web-search";
+import { WEB_FETCH_TOOL, executeWebFetch } from "./web-fetch";
 
 export type { KBFile };
 export { getKBFiles } from "./kb";
@@ -13,6 +14,7 @@ export function buildTools(kbFiles: KBFile[]) {
   return [
     ...(kbFiles.length > 0 ? [...KB_TOOLS] : []),
     WEB_SEARCH_TOOL,
+    WEB_FETCH_TOOL,
   ];
 }
 
@@ -31,6 +33,10 @@ export async function executeTool(
       });
     }
     return executeBraveSearch((args.query as string) ?? "", ctx.braveApiKey);
+  }
+
+  if (toolName === "web_fetch") {
+    return executeWebFetch((args.url as string) ?? "");
   }
 
   return executeKBTool(toolName, args as Record<string, string>, ctx.kbFiles);
