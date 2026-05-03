@@ -12,6 +12,12 @@
 // The metadataHash is stored on-chain as the ERC-721 tokenURI source.
 // The intelligenceHash is stored as the IntelligentData dataHash.
 
+import {
+  getZGStorageExpectedReplica,
+  getZGStorageSelectAttempts,
+  getZGStorageSelectMethod,
+} from "@/lib/0g-storage-config";
+
 export const ZG_INDEXER_URL =
   process.env.NEXT_PUBLIC_ZG_INDEXER_URL ??
   "https://indexer-storage-testnet-turbo.0g.ai";
@@ -85,7 +91,10 @@ async function uploadFile(
   if (!rawHash) throw new Error("0G Merkle tree returned empty root hash");
 
   const indexer = new Indexer(ZG_INDEXER_URL);
-  const [tx, uploadErr] = await indexer.upload(blob, ZG_EVM_RPC, signer, undefined, undefined, {
+  const expectedReplica = await selectAvailableExpectedReplica(indexer);
+  const [tx, uploadErr] = await indexer.upload(blob, ZG_EVM_RPC, signer, {
+    expectedReplica,
+  }, undefined, {
     gasPrice: BigInt(20_000_000_000), // 20 GWEI
   });
   if (uploadErr !== null) {
@@ -98,6 +107,27 @@ async function uploadFile(
     // content-type is not available from the SDK; caller must supply it
     contentType: file.type || "application/octet-stream",
   };
+}
+
+async function selectAvailableExpectedReplica(indexer: {
+  selectNodes: (
+    expectedReplica: number,
+    method?: "min" | "max" | "random"
+  ) => Promise<[unknown[], Error | null]>;
+}): Promise<number> {
+  const desiredReplica = getZGStorageExpectedReplica();
+  const selectMethod = getZGStorageSelectMethod();
+  const selectAttempts = getZGStorageSelectAttempts();
+
+  for (let expectedReplica = desiredReplica; expectedReplica >= 1; expectedReplica -= 1) {
+    for (let attempt = 1; attempt <= selectAttempts; attempt += 1) {
+      const method = attempt === 1 ? selectMethod : "random";
+      const [nodes, err] = await indexer.selectNodes(expectedReplica, method);
+      if (err === null && nodes.length > 0) return expectedReplica;
+    }
+  }
+
+  return 1;
 }
 
 /**

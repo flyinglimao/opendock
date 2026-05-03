@@ -5,6 +5,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { encryptAgentIntelligence } from "@/lib/encryption";
 import { getServerUploadSigner } from "@/lib/agent-compute-wallet";
+import {
+  getZGStorageExpectedReplica,
+  getZGStorageSelectAttempts,
+  getZGStorageSelectMethod,
+  type ZGStorageSelectMethod,
+} from "@/lib/0g-storage-config";
 import { JsonRpcProvider } from "ethers";
 import type { Wallet } from "ethers";
 
@@ -21,6 +27,14 @@ const ZG_EVM_RPC =
 const BASE_URL =
   process.env.NEXT_PUBLIC_BASE_URL ?? "https://opendock.vercel.app";
 
+type StorageNodeClient = {
+  url?: string;
+  getStatus: () => Promise<{
+    networkIdentity?: { flowAddress?: string };
+    logSyncHeight?: number;
+  } | null>;
+};
+
 // SDK 的 submitLogEntryNoReceipt 送出 TX 後不等 receipt，
 // 若 TX revert 則 waitForLogEntry 會永遠 polling。
 // 這裡透過 onProgress 捕捉 txHash，確認 receipt 後若 revert 立即中止。
@@ -29,7 +43,9 @@ async function uploadBuffer(
   signer: Wallet,
   label: string
 ): Promise<{ rootHash: `0x${string}`; txHash: string | null }> {
-  const { MemData, Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
+  const { MemData, Indexer, Uploader, getFlowContract } = await import(
+    "@0gfoundation/0g-storage-ts-sdk"
+  );
   const memData = new MemData(data);
   const [tree, treeErr] = await memData.merkleTree();
   if (treeErr !== null || !tree) {
@@ -40,6 +56,61 @@ async function uploadBuffer(
 
   console.log(`[${label}] uploading ${data.byteLength} bytes, rootHash=${rootHash}`);
   const indexer = new Indexer(ZG_INDEXER_URL);
+  const desiredReplica = getZGStorageExpectedReplica();
+  const selectMethod = getZGStorageSelectMethod();
+  const selectAttempts = getZGStorageSelectAttempts();
+
+  async function createUploader(): Promise<{
+    uploader: InstanceType<typeof Uploader>;
+    expectedReplica: number;
+  }> {
+    for (let expectedReplica = desiredReplica; expectedReplica >= 1; expectedReplica -= 1) {
+      for (let attempt = 1; attempt <= selectAttempts; attempt += 1) {
+        const method: ZGStorageSelectMethod =
+          attempt === 1 ? selectMethod : "random";
+        const [nodes, selectErr] = await indexer.selectNodes(expectedReplica, method);
+        if (selectErr !== null || nodes.length === 0) {
+          console.warn(
+            `[${label}] selectNodes(expectedReplica=${expectedReplica}, method=${method}) failed:`,
+            selectErr
+          );
+          continue;
+        }
+
+        const storageNodes = nodes as StorageNodeClient[];
+        const statuses = await Promise.all(storageNodes.map((node) => node.getStatus()));
+        const missingStatusIndex = statuses.findIndex((status) => status === null);
+        if (missingStatusIndex !== -1) {
+          console.warn(
+            `[${label}] selected storage node has no status, retrying selection:`,
+            storageNodes[missingStatusIndex]?.url ?? `index ${missingStatusIndex}`
+          );
+          continue;
+        }
+
+        const flowAddress = statuses[0]?.networkIdentity?.flowAddress;
+        if (!flowAddress) {
+          console.warn(`[${label}] selected storage node did not report a flow address`);
+          continue;
+        }
+
+        console.log(
+          `[${label}] selected ${nodes.length} storage nodes with expectedReplica=${expectedReplica}, method=${method}`
+        );
+        const flow = getFlowContract(flowAddress, signer);
+        return {
+          uploader: new Uploader(nodes, ZG_EVM_RPC, flow),
+          expectedReplica,
+        };
+      }
+    }
+
+    throw new Error(
+      `[${label}] cannot select available 0G storage nodes for expectedReplica<=${desiredReplica}`
+    );
+  }
+
+  const { uploader, expectedReplica } = await createUploader();
 
   let rejectFn: ((e: Error) => void) | null = null;
   const revertGuard = new Promise<never>((_, reject) => { rejectFn = reject; });
@@ -61,19 +132,17 @@ async function uploadBuffer(
   }
 
   const [tx, uploadErr] = await Promise.race([
-    indexer.upload(
+    uploader.splitableUpload(
       memData,
-      ZG_EVM_RPC,
-      signer,
       {
+        expectedReplica,
         onProgress: (msg) => {
           console.log(`[${label}] ${msg}`);
           const match = msg.match(/Transaction submitted: (0x[0-9a-fA-F]{64})/);
           if (match) monitorTx(match[1]);
         },
       },
-      undefined,
-      {} // let SDK auto-detect gas price from network
+      undefined
     ),
     revertGuard,
     new Promise<never>((_, reject) =>
@@ -85,10 +154,11 @@ async function uploadBuffer(
     throw new Error(`[${label}] 0G upload error: ${uploadErr}`);
   }
 
-  console.log(`[${label}] done, txHash=${(tx as { txHash?: string } | null)?.txHash ?? "n/a"}`);
+  const txHash = tx.txHashes[0] ?? null;
+  console.log(`[${label}] done, txHash=${txHash ?? "n/a"}`);
   return {
     rootHash: rootHash as `0x${string}`,
-    txHash: (tx as { txHash?: string } | null)?.txHash ?? null,
+    txHash,
   };
 }
 
