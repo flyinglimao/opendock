@@ -13,7 +13,7 @@ const ZG_INDEXER =
  */
 export async function downloadZGJson<T = unknown>(rootHash: string): Promise<T | null> {
   try {
-    const { Indexer } = await import("@0gfoundation/0g-ts-sdk");
+    const { Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
     const indexer = new Indexer(ZG_INDEXER);
     const [blob, err] = await indexer.downloadToBlob(rootHash);
     if (err !== null || !blob) return null;

@@ -11,9 +11,6 @@ importers:
       '@0gfoundation/0g-storage-ts-sdk':
         specifier: ^1.2.8
         version: 1.2.8(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
-      '@0gfoundation/0g-ts-sdk':
-        specifier: ^1.2.6
-        version: 1.2.6(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
       '@0glabs/0g-serving-broker':
         specifier: ^0.7.5
         version: 0.7.5(@types/circomlibjs@0.1.6)(@types/crypto-js@4.2.2)(circomlibjs@0.1.7(bufferutil@4.1.0)(utf-8-validate@5.0.10))(crypto-js@4.2.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
@@ -113,11 +110,6 @@ packages:
 
   '@0gfoundation/0g-storage-ts-sdk@1.2.8':
     resolution: {integrity: sha512-MpUAgCd96Sv769GKD0qTZtOSnOeEHERgyaCn+x+KMAgf4oKqSNrxPGEDGLxihrP3vV+Hz/xhRggmQnwBi64iLA==}
-    peerDependencies:
-      ethers: 6.13.1
-
-  '@0gfoundation/0g-ts-sdk@1.2.6':
-    resolution: {integrity: sha512-1CXUnMblQOVJek+T7l+DRn1KuzPmZV6JfMrZbXOihSAPF2er8vFkq519MqoJroUH2yEjdW1z41x5aVPbCSp1gQ==}
     peerDependencies:
       ethers: 6.13.1
 
@@ -5801,21 +5793,6 @@ packages:
 snapshots:
 
   '@0gfoundation/0g-storage-ts-sdk@1.2.8(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)':
-    dependencies:
-      '@ethersproject/bytes': 5.8.0
-      '@ethersproject/keccak256': 5.8.0
-      '@noble/ciphers': 1.3.0
-      '@noble/curves': 1.9.7
-      '@noble/hashes': 1.8.0
-      ethers: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-      open-jsonrpc-provider: 0.2.1(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-    transitivePeerDependencies:
-      - bufferutil
-      - debug
-      - supports-color
-      - utf-8-validate
-
-  '@0gfoundation/0g-ts-sdk@1.2.6(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)':
     dependencies:
       '@ethersproject/bytes': 5.8.0
       '@ethersproject/keccak256': 5.8.0

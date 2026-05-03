@@ -59,8 +59,8 @@ The app encrypts agent intelligence as AES-256-GCM JSON envelopes in
 
 - **ERC-7857-style iNFT private metadata:** `OpenDockINFT` stores public
   metadata separately from private intelligent data hashes.
-- **0G Storage:** `@0gfoundation/0g-storage-ts-sdk` and `@0gfoundation/0g-ts-sdk`
-  are used to upload agent metadata, images, and encrypted intelligence/memory.
+- **0G Storage:** `@0gfoundation/0g-storage-ts-sdk`
+  is used to upload agent metadata, images, and encrypted intelligence/memory.
 - **0G Compute / Serving:** `@0glabs/0g-serving-broker` is used to discover
   inference providers, obtain request headers, proxy chat completions, and
   settle inference responses.

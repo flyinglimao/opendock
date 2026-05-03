@@ -74,7 +74,7 @@ async function uploadFile(
   file: File,
   signer: import("ethers").Signer
 ): Promise<UploadResult> {
-  const { Blob, Indexer } = await import("@0gfoundation/0g-ts-sdk/browser");
+  const { Blob, Indexer } = await import("@0gfoundation/0g-storage-ts-sdk/browser");
 
   const blob = new Blob(file);
   const [tree, treeErr] = await blob.merkleTree();

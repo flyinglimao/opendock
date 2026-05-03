@@ -24,7 +24,7 @@ export async function GET(
   const typeHint = req.nextUrl.searchParams.get("type") || "image/webp";
 
   try {
-    const { Indexer } = await import("@0gfoundation/0g-ts-sdk");
+    const { Indexer } = await import("@0gfoundation/0g-storage-ts-sdk");
     const indexer = new Indexer(ZG_INDEXER);
     const [blob, err] = await indexer.downloadToBlob(hash);
     if (err !== null || !blob) {
